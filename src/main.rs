@@ -7,8 +7,8 @@ fn main() {
     let pool = ThreadPool::new(4);
 
     for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        pool.execute(|| match http_server::handel_connection(stream) {
+        let mut stream = stream.unwrap();
+        pool.execute(move || match http_server::handel_connection(&mut stream) {
             Err(err) => println!("{:?}", err),
             _ => (),
         });

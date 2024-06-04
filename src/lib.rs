@@ -11,6 +11,8 @@ use flate2::Compression;
 
 // TODO: use better error handling mechanism, it's annoying to use .into() every time I want to report an error
 type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
+pub trait Stream: Read + Write {}
+impl Stream for TcpStream {}
 
 #[derive(Debug)]
 enum HTTPRequestMethod {
@@ -80,7 +82,7 @@ impl HTTPResponseBuilder {
 }
 
 impl HTTPResponseMessage {
-    pub fn write_to(&self, stream: &mut TcpStream) -> Result<()> {
+    pub fn write_to(&self, stream: &mut impl Stream) -> Result<()> {
         let mut response = format!(
             "HTTP/1.1 {} {}\r\n",
             self.status_code as u16,
@@ -113,7 +115,7 @@ fn encode_gzip(text: &str) -> Result<Vec<u8>> {
     Ok(res_vec)
 }
 
-fn parse_http_request(mut stream: &mut TcpStream) -> Result<HTTPRequest> {
+fn parse_http_request(mut stream: &mut impl Stream) -> Result<HTTPRequest> {
     let mut buf_reader = BufReader::new(&mut stream);
     let mut http_request = Vec::new();
     loop {
@@ -179,19 +181,19 @@ fn parse_http_request(mut stream: &mut TcpStream) -> Result<HTTPRequest> {
     });
 }
 
-fn send_response(stream: &mut TcpStream, response: HTTPResponseMessage) -> Result<()> {
+fn send_response(stream: &mut impl Stream, response: HTTPResponseMessage) -> Result<()> {
     response.write_to(stream)?;
     Ok(())
 }
 
-pub fn handel_connection(mut stream: TcpStream) -> Result<()> {
-    let http_request = parse_http_request(&mut stream)?;
+pub fn handel_connection(stream: &mut impl Stream) -> Result<()> {
+    let http_request = parse_http_request(stream)?;
 
     match http_request.method {
         HTTPRequestMethod::GET(recourse) => {
             if recourse == "/" {
                 let response_ok = HTTPResponseBuilder::new(HTTPResponseStatusCode::OK).build();
-                send_response(&mut stream, response_ok)?;
+                send_response(stream, response_ok)?;
             } else if let Some(echo) = recourse.strip_prefix("/echo/") {
                 let encodings: Vec<String> = http_request
                     .headers
@@ -210,13 +212,13 @@ pub fn handel_connection(mut stream: TcpStream) -> Result<()> {
                         .header("content-encoding", encoding.unwrap())
                         .body(&encoded_echo)
                         .build();
-                    send_response(&mut stream, response_echo_ok)?;
+                    send_response(stream, response_echo_ok)?;
                 } else {
                     let response_echo_ok = HTTPResponseBuilder::new(HTTPResponseStatusCode::OK)
                         .header("content-type", "text/plain")
                         .body(echo.as_bytes())
                         .build();
-                    send_response(&mut stream, response_echo_ok)?;
+                    send_response(stream, response_echo_ok)?;
                 }
             } else if recourse.starts_with("/user-agent") {
                 let user_agent = if let Some(user_agent) = http_request.headers.get("user-agent") {
@@ -228,7 +230,7 @@ pub fn handel_connection(mut stream: TcpStream) -> Result<()> {
                     .header("content-type", "text/plain")
                     .body(user_agent.as_bytes())
                     .build();
-                send_response(&mut stream, user_agent_response)?;
+                send_response(stream, user_agent_response)?;
             } else if let Some(file_path) = recourse.strip_prefix("/files/") {
                 let get_file_response = if let Ok(file_content) = fs::read_to_string(file_path) {
                     HTTPResponseBuilder::new(HTTPResponseStatusCode::OK)
@@ -238,11 +240,11 @@ pub fn handel_connection(mut stream: TcpStream) -> Result<()> {
                 } else {
                     HTTPResponseBuilder::new(HTTPResponseStatusCode::NotFound).build()
                 };
-                send_response(&mut stream, get_file_response)?;
+                send_response(stream, get_file_response)?;
             } else {
                 let response_not_found =
                     HTTPResponseBuilder::new(HTTPResponseStatusCode::NotFound).build();
-                send_response(&mut stream, response_not_found)?;
+                send_response(stream, response_not_found)?;
             }
         }
         HTTPRequestMethod::POST(recourse) => {
@@ -251,7 +253,7 @@ pub fn handel_connection(mut stream: TcpStream) -> Result<()> {
                 file.write_all(&http_request.body)?;
                 let created_response =
                     HTTPResponseBuilder::new(HTTPResponseStatusCode::Created).build();
-                send_response(&mut stream, created_response)?;
+                send_response(stream, created_response)?;
             }
         }
     }
