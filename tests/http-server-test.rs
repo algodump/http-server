@@ -1,6 +1,8 @@
+use std::io::{self, Read, Write};
+
 extern crate http_server;
 
-use std::io::{self, Read, Write};
+use http_server::common::Stream;
 
 pub struct MockTcpStream {
     read_buffer: Vec<u8>,
@@ -8,9 +10,9 @@ pub struct MockTcpStream {
 }
 
 impl MockTcpStream {
-    pub fn new() -> Self {
+    pub fn from(read_buffer: &str) -> Self {
         MockTcpStream {
-            read_buffer: Vec::new(),
+            read_buffer: read_buffer.as_bytes().to_vec(),
             write_buffer: Vec::new(),
         }
     }
@@ -35,12 +37,22 @@ impl Write for MockTcpStream {
     }
 }
 
-impl http_server::Stream for MockTcpStream {}
+impl Stream for MockTcpStream {}
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_get_request() {
+    fn get_empty_request() {
+        let get_request = "GET / HTTP/1.1\r\n\r\n";
+        let mut stream = MockTcpStream::from(&get_request);
+
+        let response = http_server::handel_connection(&mut stream);
+        let expected_response = format!("HTTP/1.1 200 OK\r\n\r\n");
+
+        assert!(response.is_ok());
+        assert!(stream
+            .write_buffer
+            .starts_with(expected_response.as_bytes()));
     }
 }
