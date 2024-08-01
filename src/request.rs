@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::common::{HttpParsingError, Stream};
+use crate::common::{HttpError, Stream};
 use anyhow::{anyhow, Context, Result};
 
 #[derive(Debug, enum_utils::FromStr, Clone, Copy)]
@@ -25,13 +25,13 @@ pub struct HttpRequestLine {
     version: String,
 }
 
-pub struct HTTPRequest {
+pub struct HttpRequest {
     request_line: HttpRequestLine,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
 }
 
-impl HTTPRequest {
+impl HttpRequest {
     pub fn get_method(&self) -> HttpRequestMethod {
         return self.request_line.method;
     }
@@ -54,14 +54,14 @@ fn get_http_version(version_line: &str) -> Result<String> {
             }
         }
     }
-    return Err(anyhow!(HttpParsingError::UnsupportedHttpVersion(
+    return Err(anyhow!(HttpError::UnsupportedHttpVersion(
         version_line.to_string()
     )));
 }
 
 fn parse_header(header: &String) -> Result<(String, String)> {
     let Some(header_parsed) = header.split_once(':') else {
-        return Err(anyhow!(HttpParsingError::WrongHeaderFormat));
+        return Err(anyhow!(HttpError::WrongHeaderFormat));
     };
 
     return Ok((
@@ -70,7 +70,7 @@ fn parse_header(header: &String) -> Result<(String, String)> {
     ));
 }
 
-pub fn parse_http_request(mut stream: &mut impl Stream) -> Result<HTTPRequest> {
+pub fn parse_http_request(mut stream: &mut impl Stream) -> Result<HttpRequest> {
     let mut buf_reader = BufReader::new(&mut stream);
     let mut http_request = Vec::new();
 
@@ -89,21 +89,21 @@ pub fn parse_http_request(mut stream: &mut impl Stream) -> Result<HTTPRequest> {
     }
 
     if http_request.is_empty() {
-        return Err(anyhow!(HttpParsingError::EmptyHttpRequest));
+        return Err(anyhow!(HttpError::EmptyHttpRequest));
     }
 
     let mut start_line = http_request[0].split_ascii_whitespace();
     let (Some(method), Some(resource), Some(version)) =
         (start_line.next(), start_line.next(), start_line.next())
     else {
-        return Err(anyhow!(HttpParsingError::MalformedRequestLine(
+        return Err(anyhow!(HttpError::MalformedRequestLine(
             http_request[0].to_string()
         )));
     };
 
     // TODO: verify resource
     let method = HttpRequestMethod::from_str(method)
-        .map_err(|_| anyhow!(HttpParsingError::InvalidMethodType(method.to_string())))?;
+        .map_err(|_| anyhow!(HttpError::InvalidMethodType(method.to_string())))?;
     let version = get_http_version(version)?;
 
     // TODO: Eliminate security loophole, attacker can send unlimited amount of http headers
@@ -127,7 +127,7 @@ pub fn parse_http_request(mut stream: &mut impl Stream) -> Result<HTTPRequest> {
         .read_exact(&mut body)
         .context("Failed to read parse body of Http request")?;
 
-    return Ok(HTTPRequest {
+    return Ok(HttpRequest {
         request_line: HttpRequestLine {
             method,
             resource: resource.to_string(),
