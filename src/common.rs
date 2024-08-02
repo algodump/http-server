@@ -1,7 +1,7 @@
-use std::{io::{Read, Write}, net::TcpStream};
+use std::{io::{Read, Write}};
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum HttpError {
     #[error("Unsupported HTTP version {0}")]
     UnsupportedHttpVersion(String),
@@ -21,5 +21,5 @@ pub enum HttpError {
     PostFailed(String)
 }
 
-pub trait Stream: Read + Write {}
-impl Stream for TcpStream {}
+pub trait HttpStream: Read + Write {}
+impl<T: Read + Write> HttpStream for T {}

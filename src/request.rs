@@ -4,10 +4,10 @@ use std::{
     str::FromStr,
 };
 
-use crate::common::{HttpError, Stream};
+use crate::common::{HttpError, HttpStream};
 use anyhow::{anyhow, Context, Result};
 
-#[derive(Debug, enum_utils::FromStr, Clone, Copy)]
+#[derive(Debug, enum_utils::FromStr, Clone, Copy, PartialEq)]
 pub enum HttpRequestMethod {
     OPTIONS,
     GET,
@@ -46,17 +46,11 @@ impl HttpRequest {
 }
 
 fn get_http_version(version_line: &str) -> Result<String> {
-    let supported_versions = ["1.1"];
-    if let Some(http_version) = version_line.strip_prefix("HTTP/") {
-        for version in supported_versions {
-            if http_version.contains(version) {
-                return Ok(version.to_string());
-            }
-        }
-    }
-    return Err(anyhow!(HttpError::UnsupportedHttpVersion(
-        version_line.to_string()
-    )));
+    let version = ["1.1"]
+        .iter()
+        .find(|&&version| version_line.ends_with(version))
+        .ok_or_else(|| HttpError::UnsupportedHttpVersion(version_line.to_string()))?;
+    return Ok(version.to_string());
 }
 
 fn parse_header(header: &String) -> Result<(String, String)> {
@@ -70,7 +64,7 @@ fn parse_header(header: &String) -> Result<(String, String)> {
     ));
 }
 
-pub fn parse_http_request(mut stream: &mut impl Stream) -> Result<HttpRequest> {
+pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpRequest> {
     let mut buf_reader = BufReader::new(&mut stream);
     let mut http_request = Vec::new();
 
@@ -136,4 +130,47 @@ pub fn parse_http_request(mut stream: &mut impl Stream) -> Result<HttpRequest> {
         headers,
         body,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Write};
+
+    use super::*;
+
+    #[test]
+    fn parse_invalid_request() {
+        let invalid_requests = [
+            "",
+            "GET HTTP/1.1",
+            "INVALID / HTTP/1.1",
+            "GET / HTTP/1.1\r\nContent-Type :: text/plain\r\n\r\n",
+        ];
+
+        // TODO: match on error type if possible
+        let mut stream = Cursor::new(Vec::new());
+        for request in invalid_requests {
+            let stream_res = stream.write(request.as_bytes());
+            assert!(stream_res.is_ok());
+            let result = parse_http_request(&mut stream);
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn parse_get_request() {
+        let request =
+            b"GET /index.html HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nHello";
+        let mut stream = Cursor::new(request.to_vec());
+        let result = parse_http_request(&mut stream);
+        assert!(result.is_ok());
+
+        let parsed_request = result.unwrap();
+        assert_eq!(parsed_request.request_line.method, HttpRequestMethod::GET);
+        assert_eq!(parsed_request.request_line.resource, "/index.html");
+        assert_eq!(parsed_request.request_line.version, "1.1");
+        assert_eq!(parsed_request.headers.get("host").unwrap(), "example.com");
+        assert_eq!(parsed_request.headers.get("content-length").unwrap(), "5");
+        assert_eq!(parsed_request.body, b"Hello");
+    }
 }

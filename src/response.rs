@@ -2,7 +2,7 @@ use std::{collections::HashMap, fs, io::Write};
 
 use anyhow::{Result, bail, anyhow, Context};
 
-use crate::common::{Stream, HttpError};
+use crate::common::{HttpStream, HttpError};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
 #[derive(Debug, Clone, Copy)]
@@ -63,7 +63,7 @@ impl HttpResponseBuilder {
 }
 
 impl HttpResponseMessage {
-    pub fn write_to(&self, stream: &mut impl Stream) -> Result<()> {
+    pub fn write_to(&self, stream: &mut impl HttpStream) -> Result<()> {
         let mut response = format!(
             "HTTP/{} {} {}\r\n",
             self.version,
