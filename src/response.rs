@@ -151,7 +151,11 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
 mod tests {
     use super::{parse_http_response, HttpResponseStatusCode};
 
-    use std::{env::current_dir, fs, io::Read};
+    use std::{
+        env::{current_dir, temp_dir},
+        fs,
+        io::Read,
+    };
 
     use crate::request::{HttpRequestBuilder, HttpRequestLine, HttpRequestMethod};
 
@@ -159,6 +163,14 @@ mod tests {
     fn request_get_builder(resource: &str) -> HttpRequestBuilder {
         HttpRequestBuilder::new(HttpRequestLine::new(
             HttpRequestMethod::GET,
+            String::from(resource),
+            String::from("HTTP/1.1"),
+        ))
+    }
+
+    fn request_post_builder(resource: &str) -> HttpRequestBuilder {
+        HttpRequestBuilder::new(HttpRequestLine::new(
+            HttpRequestMethod::POST,
             String::from(resource),
             String::from("HTTP/1.1"),
         ))
@@ -239,6 +251,35 @@ mod tests {
     #[test]
     fn test_invalid_get_response() {
         let request = request_get_builder("/nonexistent/test").build();
+        let response_result = parse_http_response(&request);
+        assert!(response_result.is_err());
+    }
+
+    // POST REQUEST TESTS
+    #[test]
+    fn test_post_response() {
+        let tmp_file_path = temp_dir().join("test.txt");
+        let file_data = b"data for testing POST request".to_vec();
+
+        let request = request_post_builder(format!("/files/{}", tmp_file_path.display()).as_str())
+            .body(&file_data)
+            .build();
+        let response_result = parse_http_response(&request);
+        assert!(response_result.is_ok());
+
+        let response = response_result.unwrap();
+        let mut file = fs::File::open(&tmp_file_path).expect("POST request failed to create file");
+        let mut file_content_create_by_post_request = Vec::new();
+        file.read_to_end(&mut file_content_create_by_post_request)
+            .expect("Failed to read test file");
+
+        assert_eq!(response.status_code, HttpResponseStatusCode::Created);
+        assert_eq!(file_content_create_by_post_request, file_data);
+    }
+
+    #[test]
+    fn test_invalid_post_response() {
+        let request = request_post_builder("/nonexistent/test").build();
         let response_result = parse_http_response(&request);
         assert!(response_result.is_err());
     }
