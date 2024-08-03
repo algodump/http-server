@@ -1,8 +1,8 @@
 use std::{collections::HashMap, fs, io::Write};
 
-use anyhow::{Result, bail, anyhow, Context};
+use anyhow::{anyhow, bail, Context, Result};
 
-use crate::common::{HttpStream, HttpError};
+use crate::common::{HttpError, HttpMessageContent, HttpStream};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
 #[derive(Debug, Clone, Copy)]
@@ -21,12 +21,10 @@ impl ToString for HttpResponseStatusCode {
     }
 }
 
-#[derive(Debug)]
 pub struct HttpResponseMessage {
     status_code: HttpResponseStatusCode,
     version: String,
-    headers: HashMap<String, String>,
-    body: Vec<u8>,
+    content: HttpMessageContent,
 }
 
 pub struct HttpResponseBuilder(HttpResponseMessage);
@@ -35,8 +33,7 @@ impl HttpResponseBuilder {
         Self(HttpResponseMessage {
             status_code: http_status_code,
             version: String::from(version),
-            headers: HashMap::new(),
-            body: vec![],
+            content: HttpMessageContent::new(HashMap::new(), Vec::new()),
         })
     }
 
@@ -46,14 +43,14 @@ impl HttpResponseBuilder {
         header_content: impl Into<String>,
     ) -> Self {
         self.0
-            .headers
-            .insert(header_name.into(), header_content.into());
+            .content
+            .add_header(header_name.into(), header_content.into());
         self
     }
 
     pub fn body(mut self, body: &[u8]) -> Self {
-        self.0.body = Vec::from(body);
-        let body_length = self.0.body.len();
+        self.0.content.set_body(Vec::from(body));
+        let body_length = self.0.content.get_body().len();
         self.header("content-length", body_length.to_string())
     }
 
@@ -71,13 +68,13 @@ impl HttpResponseMessage {
             self.status_code.to_string()
         );
 
-        for (header_name, header_content) in &self.headers {
+        for (header_name, header_content) in self.content.get_headers() {
             response.push_str(&format!("{} : {}\r\n", header_name, header_content));
         }
         response.push_str("\r\n");
 
         stream.write_all(response.as_bytes())?;
-        stream.write_all(&self.body)?;
+        stream.write_all(&self.content.get_body())?;
         Ok(())
     }
 }
@@ -97,7 +94,7 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
                     return Ok(http_ok_response_builder.build());
                 }
                 "/user-agent" => {
-                    let Some(user_agent) = http_request.headers.get("user-agent") else {
+                    let Some(user_agent) = http_request.content().get_header("user-agent") else {
                         bail!("Can't find user-agent");
                     };
                     let user_agent_response = http_ok_response_builder
@@ -136,7 +133,7 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
         HttpRequestMethod::POST => {
             if let Some(file_path) = resource.strip_prefix("/files/") {
                 let mut file = fs::File::create(file_path).context("Failed to create file")?;
-                file.write_all(&http_request.body)
+                file.write_all(&http_request.content().get_body())
                     .context("POST request failed")?;
                 let created_response =
                     HttpResponseBuilder::new(HttpResponseStatusCode::Created, &version).build();

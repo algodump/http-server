@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::common::{HttpError, HttpStream};
+use crate::common::{HttpError, HttpMessageContent, HttpStream};
 use anyhow::{anyhow, Context, Result};
 
 #[derive(Debug, enum_utils::FromStr, Clone, Copy, PartialEq)]
@@ -25,10 +25,19 @@ pub struct HttpRequestLine {
     version: String,
 }
 
+impl HttpRequestLine {
+    pub fn new(method: HttpRequestMethod, resource: String, version: String) -> Self {
+        Self {
+            method,
+            resource,
+            version,
+        }
+    }
+}
+
 pub struct HttpRequest {
     request_line: HttpRequestLine,
-    pub headers: HashMap<String, String>,
-    pub body: Vec<u8>,
+    content: HttpMessageContent,
 }
 
 impl HttpRequest {
@@ -42,6 +51,42 @@ impl HttpRequest {
 
     pub fn get_version(&self) -> String {
         return self.request_line.version.clone();
+    }
+
+    pub fn content(&self) -> &HttpMessageContent {
+        &self.content
+    }
+}
+
+
+pub struct HttpRequestBuilder(HttpRequest);
+impl HttpRequestBuilder {
+    pub fn new(request_line: HttpRequestLine) -> Self {
+        Self(HttpRequest {
+            request_line,
+            content: HttpMessageContent::new(HashMap::new(), Vec::new()),
+        })
+    }
+
+    pub fn header(
+        mut self,
+        header_name: impl Into<String>,
+        header_content: impl Into<String>,
+    ) -> Self {
+        self.0
+            .content
+            .add_header(header_name.into(), header_content.into());
+        self
+    }
+
+    pub fn body(mut self, body: &[u8]) -> Self {
+        self.0.content.set_body(Vec::from(body));
+        let body_length = self.0.content.get_body().len();
+        self.header("content-length", body_length.to_string())
+    }
+
+    pub fn build(self) -> HttpRequest {
+        self.0
     }
 }
 
@@ -122,13 +167,8 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
         .context("Failed to read parse body of Http request")?;
 
     return Ok(HttpRequest {
-        request_line: HttpRequestLine {
-            method,
-            resource: resource.to_string(),
-            version,
-        },
-        headers,
-        body,
+        request_line: HttpRequestLine::new(method, resource.to_string(), version),
+        content: HttpMessageContent::new(headers, body),
     });
 }
 
@@ -169,8 +209,8 @@ mod tests {
         assert_eq!(parsed_request.request_line.method, HttpRequestMethod::GET);
         assert_eq!(parsed_request.request_line.resource, "/index.html");
         assert_eq!(parsed_request.request_line.version, "1.1");
-        assert_eq!(parsed_request.headers.get("host").unwrap(), "example.com");
-        assert_eq!(parsed_request.headers.get("content-length").unwrap(), "5");
-        assert_eq!(parsed_request.body, b"Hello");
+        assert_eq!(parsed_request.content.get_header("host").unwrap(), "example.com");
+        assert_eq!(parsed_request.content.get_header("content-length").unwrap(), "5");
+        assert_eq!(parsed_request.content.get_body(), b"Hello");
     }
 }
