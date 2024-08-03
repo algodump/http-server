@@ -5,7 +5,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use crate::common::{HttpError, HttpMessageContent, HttpStream};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HttpResponseStatusCode {
     OK = 200,
     Created = 201,
@@ -77,6 +77,10 @@ impl HttpResponseMessage {
         stream.write_all(&self.content.get_body())?;
         Ok(())
     }
+
+    pub fn content(&self) -> &HttpMessageContent {
+        &self.content
+    }
 }
 
 pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMessage> {
@@ -88,48 +92,46 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
         HttpResponseBuilder::new(HttpResponseStatusCode::NotFound, &version);
 
     match http_request.get_method() {
-        HttpRequestMethod::GET => {
-            match resource.as_str() {
-                "/" => {
-                    return Ok(http_ok_response_builder.build());
-                }
-                "/user-agent" => {
-                    let Some(user_agent) = http_request.content().get_header("user-agent") else {
-                        bail!("Can't find user-agent");
-                    };
-                    let user_agent_response = http_ok_response_builder
+        HttpRequestMethod::GET => match resource.as_str() {
+            "/" => {
+                return Ok(http_ok_response_builder.build());
+            }
+            "/user-agent" => {
+                let Some(user_agent) = http_request.content().get_header("user-agent") else {
+                    bail!("Can't find user-agent");
+                };
+                let user_agent_response = http_ok_response_builder
+                    .header("content-type", "text/plain")
+                    .body(user_agent.as_bytes())
+                    .build();
+
+                return Ok(user_agent_response);
+            }
+            _ => {
+                if let Some(echo) = resource.strip_prefix("/echo/") {
+                    let response_echo_ok = http_ok_response_builder
                         .header("content-type", "text/plain")
-                        .body(user_agent.as_bytes())
+                        .body(echo.as_bytes())
                         .build();
 
-                    return Ok(user_agent_response);
-                }
-                _ => {
-                    if let Some(echo) = resource.strip_prefix("/echo/") {
-                        let response_echo_ok = http_ok_response_builder
-                            .header("content-type", "text/plain")
-                            .body(echo.as_bytes())
-                            .build();
+                    return Ok(response_echo_ok);
+                } else if let Some(file_path) = resource.strip_prefix("/files/") {
+                    let get_file_response = if let Ok(file_content) = fs::read_to_string(file_path)
+                    {
+                        http_ok_response_builder
+                            .header("content-type", "application/octet-stream")
+                            .body(file_content.as_bytes())
+                            .build()
+                    } else {
+                        dbg!("Can't find {:?}", file_path);
+                        http_not_found_response_builder.build()
+                    };
 
-                        return Ok(response_echo_ok);
-                    } else if let Some(file_path) = resource.strip_prefix("/files/") {
-                        let get_file_response =
-                            if let Ok(file_content) = fs::read_to_string(file_path) {
-                                http_ok_response_builder
-                                    .header("content-type", "application/octet-stream")
-                                    .body(file_content.as_bytes())
-                                    .build()
-                            } else {
-                                // TODO: log fs_read_to_string error
-                                http_not_found_response_builder.build()
-                            };
-
-                        return Ok(get_file_response);
-                    }
-                    return Err(anyhow!(HttpError::GetFailed(resource)));
+                    return Ok(get_file_response);
                 }
+                return Err(anyhow!(HttpError::GetFailed(resource)));
             }
-        }
+        },
         HttpRequestMethod::POST => {
             if let Some(file_path) = resource.strip_prefix("/files/") {
                 let mut file = fs::File::create(file_path).context("Failed to create file")?;
@@ -142,5 +144,102 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
             return Err(anyhow!(HttpError::PostFailed(resource)));
         }
         _ => todo!("Not implemented"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_http_response, HttpResponseStatusCode};
+
+    use std::{env::current_dir, fs, io::Read};
+
+    use crate::request::{HttpRequestBuilder, HttpRequestLine, HttpRequestMethod};
+
+    // BUILDERS
+    fn request_get_builder(resource: &str) -> HttpRequestBuilder {
+        HttpRequestBuilder::new(HttpRequestLine::new(
+            HttpRequestMethod::GET,
+            String::from(resource),
+            String::from("HTTP/1.1"),
+        ))
+    }
+
+    // GET REQUEST TESTS
+    #[test]
+    fn test_empty_get_response() {
+        let request = request_get_builder("/").build();
+        let response_result = parse_http_response(&request);
+
+        assert!(response_result.is_ok());
+
+        let response = response_result.unwrap();
+        assert_eq!(response.status_code, HttpResponseStatusCode::OK);
+    }
+
+    #[test]
+    fn test_user_agent_response() {
+        let user_agent = "my-http-server";
+        let request = request_get_builder("/user-agent")
+            .header("user-agent", user_agent)
+            .build();
+        let response_result = parse_http_response(&request);
+        assert!(response_result.is_ok());
+
+        let response = response_result.unwrap();
+        assert_eq!(response.status_code, HttpResponseStatusCode::OK);
+        assert!(response
+            .content
+            .get_body()
+            .starts_with(user_agent.as_bytes()));
+    }
+
+    #[test]
+    fn test_user_echo_response() {
+        let request = request_get_builder("/echo/test").build();
+        let response_result = parse_http_response(&request);
+        assert!(response_result.is_ok());
+
+        let response = response_result.unwrap();
+        assert_eq!(response.status_code, HttpResponseStatusCode::OK);
+        assert!(response.content.get_body().starts_with(b"test"));
+    }
+
+    #[test]
+    fn test_get_file_response() {
+        let file_full_path = current_dir()
+            .expect("Failed to get current directory")
+            .as_path()
+            .join("src")
+            .join("main.rs");
+        let mut file = fs::File::open(&file_full_path).expect("Can't open test file");
+        let mut file_content = Vec::new();
+        file.read_to_end(&mut file_content)
+            .expect("Failed to read test file");
+
+        let request =
+            request_get_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
+        let response_result = parse_http_response(&request);
+        assert!(response_result.is_ok());
+
+        let response = response_result.unwrap();
+        assert_eq!(response.status_code, HttpResponseStatusCode::OK);
+        assert!(response.content.get_body().starts_with(&file_content));
+    }
+
+    #[test]
+    fn test_not_found_response() {
+        let request = request_get_builder("/files/nonexistent_file").build();
+        let response_result = parse_http_response(&request);
+        assert!(response_result.is_ok());
+
+        let response = response_result.unwrap();
+        assert_eq!(response.status_code, HttpResponseStatusCode::NotFound);
+    }
+
+    #[test]
+    fn test_invalid_get_response() {
+        let request = request_get_builder("/nonexistent/test").build();
+        let response_result = parse_http_response(&request);
+        assert!(response_result.is_err());
     }
 }
