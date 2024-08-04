@@ -116,14 +116,22 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
 
                     return Ok(response_echo_ok);
                 } else if let Some(file_path) = resource.strip_prefix("/files/") {
-                    let get_file_response = if let Ok(file_content) = fs::read_to_string(file_path)
+                    // FIXME: handel file versions properly, for now it will be just discarded 
+                    // EXAMPLE: fontawesome-webfont.woff?v=4.7.0
+                    let path_end = file_path.find("?v=").unwrap_or(file_path.len());
+                    let processed_file_path = &file_path[..path_end];
+                    let file_content_res = fs::read(processed_file_path);
+
+                    let get_file_response = if let Ok(file_content) = file_content_res
                     {
+                        let content_type = http_request.content().get_content_type(processed_file_path)?;
                         http_ok_response_builder
-                            .header("content-type", "application/octet-stream")
-                            .body(file_content.as_bytes())
+                            .header("content-type", content_type)
+                            .body(&file_content)
                             .build()
                     } else {
-                        dbg!("Can't find {:?}", file_path);
+                        // TODO: add normal logging instead of using println!
+                        println!("Can't read `{:?}` error = {:?}", processed_file_path, file_content_res.unwrap_err());
                         http_not_found_response_builder.build()
                     };
 
@@ -235,6 +243,7 @@ mod tests {
 
         let response = response_result.unwrap();
         assert_eq!(response.status_code, HttpResponseStatusCode::OK);
+        assert_eq!(response.content.get_header("content-type").unwrap(), "text/x-rust");
         assert!(response.content.get_body().starts_with(&file_content));
     }
 

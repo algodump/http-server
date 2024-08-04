@@ -58,7 +58,6 @@ impl HttpRequest {
     }
 }
 
-
 pub struct HttpRequestBuilder(HttpRequest);
 impl HttpRequestBuilder {
     pub fn new(request_line: HttpRequestLine) -> Self {
@@ -209,8 +208,14 @@ mod tests {
         assert_eq!(parsed_request.request_line.method, HttpRequestMethod::GET);
         assert_eq!(parsed_request.request_line.resource, "/index.html");
         assert_eq!(parsed_request.request_line.version, "1.1");
-        assert_eq!(parsed_request.content.get_header("host").unwrap(), "example.com");
-        assert_eq!(parsed_request.content.get_header("content-length").unwrap(), "5");
+        assert_eq!(
+            parsed_request.content.get_header("host").unwrap(),
+            "example.com"
+        );
+        assert_eq!(
+            parsed_request.content.get_header("content-length").unwrap(),
+            "5"
+        );
         assert_eq!(parsed_request.content.get_body(), b"Hello");
     }
 }
