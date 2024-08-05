@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fs, io::Write};
 
 use anyhow::{anyhow, bail, Context, Result};
+use log::{error, trace};
 
 use crate::common::{HttpError, HttpMessageContent, HttpStream};
 use crate::request::{HttpRequest, HttpRequestMethod};
@@ -87,6 +88,8 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
     let resource = http_request.get_resource();
     let version = http_request.get_version();
 
+    trace!("Method: {:?}, Resource: {}", http_request.get_method(), resource);
+
     let http_ok_response_builder = HttpResponseBuilder::new(HttpResponseStatusCode::OK, &version);
     let http_not_found_response_builder =
         HttpResponseBuilder::new(HttpResponseStatusCode::NotFound, &version);
@@ -125,13 +128,14 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
                     let get_file_response = if let Ok(file_content) = file_content_res
                     {
                         let content_type = http_request.content().get_content_type(processed_file_path)?;
+                        trace!("Content type: {}", content_type);
+                        
                         http_ok_response_builder
                             .header("content-type", content_type)
                             .body(&file_content)
                             .build()
                     } else {
-                        // TODO: add normal logging instead of using println!
-                        println!("Can't read `{:?}` error = {:?}", processed_file_path, file_content_res.unwrap_err());
+                        error!("Can't read `{:?}` error = {:?}", processed_file_path, file_content_res.unwrap_err());
                         http_not_found_response_builder.build()
                     };
 

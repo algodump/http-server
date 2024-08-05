@@ -4,6 +4,8 @@ use std::{
     str::FromStr,
 };
 
+use ::log::trace;
+
 use crate::common::{HttpError, HttpMessageContent, HttpStream};
 use anyhow::{anyhow, Context, Result};
 
@@ -102,6 +104,7 @@ fn parse_header(header: &String) -> Result<(String, String)> {
         return Err(anyhow!(HttpError::WrongHeaderFormat));
     };
 
+    trace!("Parsed header: {} {}", header_parsed.0, header_parsed.1);
     return Ok((
         header_parsed.0.trim().to_ascii_lowercase(),
         header_parsed.1.trim().to_string(),
