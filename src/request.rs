@@ -6,7 +6,10 @@ use std::{
 
 use ::log::trace;
 
-use crate::common::{HttpError, HttpMessageContent, HttpStream};
+use crate::{
+    common::{HttpError, HttpMessageContent, HttpStream, MAX_HEADER_AMOUNT},
+    request,
+};
 use anyhow::{anyhow, Context, Result};
 
 #[derive(Debug, enum_utils::FromStr, Clone, Copy, PartialEq)]
@@ -113,32 +116,21 @@ fn parse_header(header: &String) -> Result<(String, String)> {
 
 pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpRequest> {
     let mut buf_reader = BufReader::new(&mut stream);
-    let mut http_request = Vec::new();
 
-    loop {
-        let mut line = String::new();
-        // TODO: Infinite loop possible if EOF is never provide
-        buf_reader
-            .read_line(&mut line)
-            .context("Encountered invalid UTF8 while parsing HTTP request.")?;
+    // Parse request line
+    let mut request_line = String::new();
+    buf_reader
+        .read_line(&mut request_line)
+        .context(HttpError::InvalidUTF8Char)?;
 
-        let trimmed = line.trim_end().to_string();
-        if trimmed.is_empty() {
-            break;
-        }
-        http_request.push(trimmed);
-    }
-
-    if http_request.is_empty() {
-        return Err(anyhow!(HttpError::EmptyHttpRequest));
-    }
-
-    let mut start_line = http_request[0].split_ascii_whitespace();
-    let (Some(method), Some(resource), Some(version)) =
-        (start_line.next(), start_line.next(), start_line.next())
-    else {
+    let mut request_line_iter = request_line.split_ascii_whitespace();
+    let (Some(method), Some(resource), Some(version)) = (
+        request_line_iter.next(),
+        request_line_iter.next(),
+        request_line_iter.next(),
+    ) else {
         return Err(anyhow!(HttpError::MalformedRequestLine(
-            http_request[0].to_string()
+            request_line.to_string()
         )));
     };
 
@@ -147,12 +139,27 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
         .map_err(|_| anyhow!(HttpError::InvalidMethodType(method.to_string())))?;
     let version = get_http_version(version)?;
 
-    // TODO: Eliminate security loophole, attacker can send unlimited amount of http headers
-    let headers = http_request
-        .iter()
-        .skip(1)
-        .map(|header| parse_header(header))
-        .collect::<Result<HashMap<String, String>, _>>()?;
+    // Parse headers
+    let mut headers: HashMap<String, String> = HashMap::new();
+    loop {
+        let mut line = String::new();
+        // TODO: Infinite loop possible if EOF is never provide
+        buf_reader
+            .read_line(&mut line)
+            .context(HttpError::InvalidUTF8Char)?;
+        let trimmed = line.trim_end().to_string();
+
+        if trimmed.is_empty() {
+            break;
+        }
+
+        let header = parse_header(&line)?;
+        headers.insert(header.0, header.1);
+
+        if headers.len() > MAX_HEADER_AMOUNT {
+            return Err(anyhow!(HttpError::HeaderOverflow));
+        }
+    }
 
     let content_length: usize = if let Some(content_length) = headers.get("content-length") {
         content_length
@@ -176,7 +183,11 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Cursor, Write};
+    use rand::Rng;
+    use std::{
+        fmt::format,
+        io::{Cursor, Write},
+    };
 
     use super::*;
 
@@ -220,5 +231,42 @@ mod tests {
             "5"
         );
         assert_eq!(parsed_request.content.get_body(), b"Hello");
+    }
+
+    #[test]
+    fn parse_request_with_a_lot_of_headers() {
+        let mut request = String::from("GET / HTTP/1.1\r\n");
+        for _ in 0..MAX_HEADER_AMOUNT {
+            let header_name = get_random_string(10);
+            let header_value = get_random_string(10);
+            let header = format!("{}:{}\r\n", header_name, header_value);
+            request.push_str(&header);
+        }
+
+        let mut stream = Cursor::new(request.as_bytes().to_vec());
+        let result = parse_http_request(&mut stream);
+        assert!(result.is_ok());
+
+        // Add one extra header that should lead to error
+        request.push_str("break:http\r\n");
+        stream.flush().expect("Failed to flush stream");
+        stream.write_all(request.as_bytes()).expect("Failed to write to stream");
+
+        let result = parse_http_request(&mut stream);
+        assert!(result.is_err());
+    }
+
+    static CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+                            abcdefghijklmnopqrstuvwxyz\
+                            0123456789)(*&^%$#@!~";
+    fn get_random_string(len: u8) -> String {
+        let mut rng = rand::thread_rng();
+        let string: String = (0..len)
+            .map(|_| {
+                let idx = rng.gen_range(0..CHARSET.len());
+                CHARSET[idx] as char
+            })
+            .collect();
+        return string;
     }
 }

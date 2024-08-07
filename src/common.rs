@@ -26,7 +26,13 @@ pub enum HttpError {
     GetFailed(String),
     #[error("Can't post requested resources: {0}")]
     PostFailed(String),
+    #[error("Exceeded maximum amount of headers")]
+    HeaderOverflow,
+    #[error("Encountered invalid UTF8 while parsing HTTP request")]
+    InvalidUTF8Char
 }
+
+pub const MAX_HEADER_AMOUNT: usize = 10_000;
 
 pub trait HttpStream: Read + Write {}
 impl<T: Read + Write> HttpStream for T {}
