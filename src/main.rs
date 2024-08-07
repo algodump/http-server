@@ -43,7 +43,7 @@ struct Args {
     #[arg(short, long, default_value_t = default_ip().to_string())]
     ip: String,
 
-    /// Port numbers
+    /// Port number
     #[arg(short, long, default_value_t = default_port())]
     port: u16,
 }

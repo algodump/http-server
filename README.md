@@ -18,7 +18,7 @@ cargo run -- --ip 192.168.0.1 --port 3499
 ```
 
 ## TODO
-- [ ] Fix security issues with during the parsing 
+- [ ] Fix security issues during the parsing 
 - [ ] Implement URL parsing 
 - [ ] Implement multipart requests
 - [ ] Implement simple authentication
