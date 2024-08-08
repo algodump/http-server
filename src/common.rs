@@ -29,10 +29,13 @@ pub enum HttpError {
     #[error("Exceeded maximum amount of headers")]
     HeaderOverflow,
     #[error("Encountered invalid UTF8 while parsing HTTP request")]
-    InvalidUTF8Char
+    InvalidUTF8Char,
+    #[error("Request body size exceeded maximum allowed size of 2GB")]
+    BodySizeLimit
 }
 
 pub const MAX_HEADER_AMOUNT: usize = 10_000;
+pub const MAX_REQUEST_BODY_SIZE : u32 = u32::MAX / 2;
 
 pub trait HttpStream: Read + Write {}
 impl<T: Read + Write> HttpStream for T {}

@@ -6,9 +6,8 @@ use std::{
 
 use ::log::trace;
 
-use crate::{
-    common::{HttpError, HttpMessageContent, HttpStream, MAX_HEADER_AMOUNT},
-    request,
+use crate::common::{
+    HttpError, HttpMessageContent, HttpStream, MAX_HEADER_AMOUNT, MAX_REQUEST_BODY_SIZE,
 };
 use anyhow::{anyhow, Context, Result};
 
@@ -161,19 +160,26 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
         }
     }
 
-    let content_length: usize = if let Some(content_length) = headers.get("content-length") {
+    let content_length = if let Some(content_length) = headers.get("content-length") {
         content_length
-            .parse::<usize>()
+            .parse::<u32>()
             .context("Invalid content-length value.")?
     } else {
         0
     };
 
-    // TODO: this might lead to OS stack overflow
-    let mut body = vec![0; content_length];
-    buf_reader
-        .read_exact(&mut body)
-        .context("Failed to read parse body of Http request")?;
+    // Allow max body length up to 2 GB
+    if content_length > MAX_REQUEST_BODY_SIZE {
+        return Err(anyhow!(HttpError::BodySizeLimit));
+    }
+
+    let mut body = Vec::new();
+    if method != HttpRequestMethod::HEAD || content_length != 0 {
+        body.resize_with(content_length as usize, Default::default);
+        buf_reader
+            .read_exact(&mut body)
+            .context("Failed to read parse body of Http request")?;
+    }
 
     return Ok(HttpRequest {
         request_line: HttpRequestLine::new(method, resource.to_string(), version),
@@ -184,20 +190,25 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
 #[cfg(test)]
 mod tests {
     use rand::Rng;
-    use std::{
-        fmt::format,
-        io::{Cursor, Write},
-    };
+    use std::io::{Cursor, Write};
 
     use super::*;
 
     #[test]
     fn parse_invalid_request() {
         let invalid_requests = [
-            "",
-            "GET HTTP/1.1",
-            "INVALID / HTTP/1.1",
-            "GET / HTTP/1.1\r\nContent-Type :: text/plain\r\n\r\n",
+            // invalid request line
+            String::from(""),
+            String::from("GET HTTP/1.1"),
+            String::from("INVALID / HTTP/1.1"),
+            // invalid header format
+            String::from("GET / HTTP/1.1\r\nContent-Type :: text/plain\r\n\r\n"),
+            // invalid content type
+            String::from("GET / HTTP/1.1\r\nContent-Length: -32\r\n\r\n"),
+            format!(
+                "GET / HTTP/1.1\r\nContent-Length: {} \r\n\r\n",
+                MAX_REQUEST_BODY_SIZE + 1
+            ),
         ];
 
         // TODO: match on error type if possible
@@ -250,7 +261,9 @@ mod tests {
         // Add one extra header that should lead to error
         request.push_str("break:http\r\n");
         stream.flush().expect("Failed to flush stream");
-        stream.write_all(request.as_bytes()).expect("Failed to write to stream");
+        stream
+            .write_all(request.as_bytes())
+            .expect("Failed to write to stream");
 
         let result = parse_http_request(&mut stream);
         assert!(result.is_err());

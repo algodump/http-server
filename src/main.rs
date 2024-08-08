@@ -63,7 +63,6 @@ fn main() {
     });
 
     let socket = SocketAddr::new(IpAddr::V4(ip), args.port);
-
     let listener = TcpListener::bind(socket).unwrap();
     let pool = ThreadPool::new(4);
 
