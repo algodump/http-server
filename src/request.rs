@@ -7,7 +7,8 @@ use std::{
 use ::log::trace;
 
 use crate::common::{
-    HttpError, HttpMessageContent, HttpStream, MAX_HEADER_AMOUNT, MAX_REQUEST_BODY_SIZE,
+    HttpError, HttpMessageContent, HttpStream, MAX_HEADERS_AMOUNT, MAX_HEADER_SIZE,
+    MAX_REQUEST_BODY_SIZE,
 };
 use anyhow::{anyhow, Context, Result};
 
@@ -102,6 +103,10 @@ fn get_http_version(version_line: &str) -> Result<String> {
 }
 
 fn parse_header(header: &String) -> Result<(String, String)> {
+    if header.len() as u64 > MAX_HEADER_SIZE {
+        return Err(anyhow!(HttpError::HeaderSizeLimit));
+    }
+
     let Some(header_parsed) = header.split_once(':') else {
         return Err(anyhow!(HttpError::WrongHeaderFormat));
     };
@@ -155,14 +160,14 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
         let header = parse_header(&line)?;
         headers.insert(header.0, header.1);
 
-        if headers.len() > MAX_HEADER_AMOUNT {
+        if headers.len() > MAX_HEADERS_AMOUNT {
             return Err(anyhow!(HttpError::HeaderOverflow));
         }
     }
 
     let content_length = if let Some(content_length) = headers.get("content-length") {
         content_length
-            .parse::<u32>()
+            .parse::<u64>()
             .context("Invalid content-length value.")?
     } else {
         0
@@ -175,10 +180,10 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
 
     let mut body = Vec::new();
     if method != HttpRequestMethod::HEAD || content_length != 0 {
-        body.resize_with(content_length as usize, Default::default);
+        body.resize(content_length as usize, 0);
         buf_reader
             .read_exact(&mut body)
-            .context("Failed to read parse body of Http request")?;
+            .context("Failed to read body of Http request")?;
     }
 
     return Ok(HttpRequest {
@@ -247,7 +252,7 @@ mod tests {
     #[test]
     fn parse_request_with_a_lot_of_headers() {
         let mut request = String::from("GET / HTTP/1.1\r\n");
-        for _ in 0..MAX_HEADER_AMOUNT {
+        for _ in 0..MAX_HEADERS_AMOUNT {
             let header_name = get_random_string(10);
             let header_value = get_random_string(10);
             let header = format!("{}:{}\r\n", header_name, header_value);

@@ -7,6 +7,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use mime_guess::from_path;
 use thiserror::Error;
+use bytesize::ByteSize;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum HttpError {
@@ -26,16 +27,19 @@ pub enum HttpError {
     GetFailed(String),
     #[error("Can't post requested resources: {0}")]
     PostFailed(String),
-    #[error("Exceeded maximum amount of headers")]
+    #[error("Exceeded maximum amount of headers {}", MAX_HEADERS_AMOUNT)]
     HeaderOverflow,
     #[error("Encountered invalid UTF8 while parsing HTTP request")]
     InvalidUTF8Char,
-    #[error("Request body size exceeded maximum allowed size of 2GB")]
-    BodySizeLimit
+    #[error("Request body size exceeded maximum allowed size of {}", MAX_REQUEST_BODY_SIZE)]
+    BodySizeLimit,
+    #[error("Request header size exceeded maximum allowed size {}", MAX_HEADER_SIZE)]
+    HeaderSizeLimit,
 }
 
-pub const MAX_HEADER_AMOUNT: usize = 10_000;
-pub const MAX_REQUEST_BODY_SIZE : u32 = u32::MAX / 2;
+pub const MAX_HEADERS_AMOUNT: usize = 10_000;
+pub const MAX_REQUEST_BODY_SIZE : u64 = ByteSize::gb(2).as_u64();
+pub const MAX_HEADER_SIZE: u64 = ByteSize::kb(8).as_u64();
 
 pub trait HttpStream: Read + Write {}
 impl<T: Read + Write> HttpStream for T {}
