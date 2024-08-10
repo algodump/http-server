@@ -3,35 +3,35 @@ use std::{collections::HashMap, fs, io::Write};
 use anyhow::{anyhow, bail, Context, Result};
 use log::{error, trace};
 
-use crate::common::{HttpError, HttpMessageContent, HttpStream};
+use crate::common::{HttpMessageContent, HttpStream, InternalHttpError};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum HttpResponseStatusCode {
+pub enum ResponseCode {
     OK = 200,
     Created = 201,
     NotFound = 404,
 }
 
-impl ToString for HttpResponseStatusCode {
+impl ToString for ResponseCode {
     fn to_string(&self) -> String {
         match self {
-            HttpResponseStatusCode::NotFound => return String::from("Not Found"),
+            ResponseCode::NotFound => return String::from("Not Found"),
             _ => return String::from(format!("{:?}", self)),
         }
     }
 }
 
-pub struct HttpResponseMessage {
-    status_code: HttpResponseStatusCode,
+pub struct HttpResponse {
+    status_code: ResponseCode,
     version: String,
     content: HttpMessageContent,
 }
 
-pub struct HttpResponseBuilder(HttpResponseMessage);
+pub struct HttpResponseBuilder(HttpResponse);
 impl HttpResponseBuilder {
-    pub fn new(http_status_code: HttpResponseStatusCode, version: &str) -> Self {
-        Self(HttpResponseMessage {
+    pub fn new(http_status_code: ResponseCode, version: &str) -> Self {
+        Self(HttpResponse {
             status_code: http_status_code,
             version: String::from(version),
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
@@ -55,12 +55,12 @@ impl HttpResponseBuilder {
         self.header("content-length", body_length.to_string())
     }
 
-    pub fn build(self) -> HttpResponseMessage {
+    pub fn build(self) -> HttpResponse {
         self.0
     }
 }
 
-impl HttpResponseMessage {
+impl HttpResponse {
     pub fn write_to(&self, stream: &mut impl HttpStream) -> Result<()> {
         let mut response = format!(
             "HTTP/{} {} {}\r\n",
@@ -84,15 +84,19 @@ impl HttpResponseMessage {
     }
 }
 
-pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMessage> {
+pub fn build_http_response(http_request: &HttpRequest) -> Result<HttpResponse> {
     let resource = http_request.get_resource();
     let version = http_request.get_version();
 
-    trace!("Method: {:?}, Resource: {}", http_request.get_method(), resource);
+    trace!(
+        "Method: {:?}, Resource: {}",
+        http_request.get_method(),
+        resource
+    );
 
-    let http_ok_response_builder = HttpResponseBuilder::new(HttpResponseStatusCode::OK, &version);
+    let http_ok_response_builder = HttpResponseBuilder::new(ResponseCode::OK, &version);
     let http_not_found_response_builder =
-        HttpResponseBuilder::new(HttpResponseStatusCode::NotFound, &version);
+        HttpResponseBuilder::new(ResponseCode::NotFound, &version);
 
     match http_request.get_method() {
         HttpRequestMethod::GET => match resource.as_str() {
@@ -119,29 +123,34 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
 
                     return Ok(response_echo_ok);
                 } else if let Some(file_path) = resource.strip_prefix("/files/") {
-                    // FIXME: handel file versions properly, for now it will be just discarded 
+                    // FIXME: handel file versions properly, for now it will be just discarded
                     // EXAMPLE: fontawesome-webfont.woff?v=4.7.0
                     let path_end = file_path.find("?v=").unwrap_or(file_path.len());
                     let processed_file_path = &file_path[..path_end];
                     let file_content_res = fs::read(processed_file_path);
 
-                    let get_file_response = if let Ok(file_content) = file_content_res
-                    {
-                        let content_type = http_request.content().get_content_type(processed_file_path)?;
+                    let get_file_response = if let Ok(file_content) = file_content_res {
+                        let content_type = http_request
+                            .content()
+                            .get_content_type(processed_file_path)?;
                         trace!("Content type: {}", content_type);
-                        
+
                         http_ok_response_builder
                             .header("content-type", content_type)
                             .body(&file_content)
                             .build()
                     } else {
-                        error!("Can't read `{:?}` error = {:?}", processed_file_path, file_content_res.unwrap_err());
+                        error!(
+                            "Can't read `{:?}` error = {:?}",
+                            processed_file_path,
+                            file_content_res.unwrap_err()
+                        );
                         http_not_found_response_builder.build()
                     };
 
                     return Ok(get_file_response);
                 }
-                return Err(anyhow!(HttpError::GetFailed(resource)));
+                return Err(anyhow!(InternalHttpError::GetFailed(resource)));
             }
         },
         HttpRequestMethod::POST => {
@@ -150,10 +159,10 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
                 file.write_all(&http_request.content().get_body())
                     .context("POST request failed")?;
                 let created_response =
-                    HttpResponseBuilder::new(HttpResponseStatusCode::Created, &version).build();
+                    HttpResponseBuilder::new(ResponseCode::Created, &version).build();
                 return Ok(created_response);
             }
-            return Err(anyhow!(HttpError::PostFailed(resource)));
+            return Err(anyhow!(InternalHttpError::PostFailed(resource)));
         }
         _ => todo!("Not implemented"),
     }
@@ -161,7 +170,7 @@ pub fn parse_http_response(http_request: &HttpRequest) -> Result<HttpResponseMes
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_http_response, HttpResponseStatusCode};
+    use super::{build_http_response, ResponseCode};
 
     use std::{
         env::{current_dir, temp_dir},
@@ -192,12 +201,12 @@ mod tests {
     #[test]
     fn test_empty_get_response() {
         let request = request_get_builder("/").build();
-        let response_result = parse_http_response(&request);
+        let response_result = build_http_response(&request);
 
         assert!(response_result.is_ok());
 
         let response = response_result.unwrap();
-        assert_eq!(response.status_code, HttpResponseStatusCode::OK);
+        assert_eq!(response.status_code, ResponseCode::OK);
     }
 
     #[test]
@@ -206,11 +215,11 @@ mod tests {
         let request = request_get_builder("/user-agent")
             .header("user-agent", user_agent)
             .build();
-        let response_result = parse_http_response(&request);
+        let response_result = build_http_response(&request);
         assert!(response_result.is_ok());
 
         let response = response_result.unwrap();
-        assert_eq!(response.status_code, HttpResponseStatusCode::OK);
+        assert_eq!(response.status_code, ResponseCode::OK);
         assert!(response
             .content
             .get_body()
@@ -220,11 +229,11 @@ mod tests {
     #[test]
     fn test_user_echo_response() {
         let request = request_get_builder("/echo/test").build();
-        let response_result = parse_http_response(&request);
+        let response_result = build_http_response(&request);
         assert!(response_result.is_ok());
 
         let response = response_result.unwrap();
-        assert_eq!(response.status_code, HttpResponseStatusCode::OK);
+        assert_eq!(response.status_code, ResponseCode::OK);
         assert!(response.content.get_body().starts_with(b"test"));
     }
 
@@ -242,29 +251,32 @@ mod tests {
 
         let request =
             request_get_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
-        let response_result = parse_http_response(&request);
+        let response_result = build_http_response(&request);
         assert!(response_result.is_ok());
 
         let response = response_result.unwrap();
-        assert_eq!(response.status_code, HttpResponseStatusCode::OK);
-        assert_eq!(response.content.get_header("content-type").unwrap(), "text/x-rust");
+        assert_eq!(response.status_code, ResponseCode::OK);
+        assert_eq!(
+            response.content.get_header("content-type").unwrap(),
+            "text/x-rust"
+        );
         assert!(response.content.get_body().starts_with(&file_content));
     }
 
     #[test]
     fn test_not_found_response() {
         let request = request_get_builder("/files/nonexistent_file").build();
-        let response_result = parse_http_response(&request);
+        let response_result = build_http_response(&request);
         assert!(response_result.is_ok());
 
         let response = response_result.unwrap();
-        assert_eq!(response.status_code, HttpResponseStatusCode::NotFound);
+        assert_eq!(response.status_code, ResponseCode::NotFound);
     }
 
     #[test]
     fn test_invalid_get_response() {
         let request = request_get_builder("/nonexistent/test").build();
-        let response_result = parse_http_response(&request);
+        let response_result = build_http_response(&request);
         assert!(response_result.is_err());
     }
 
@@ -277,7 +289,7 @@ mod tests {
         let request = request_post_builder(format!("/files/{}", tmp_file_path.display()).as_str())
             .body(&file_data)
             .build();
-        let response_result = parse_http_response(&request);
+        let response_result = build_http_response(&request);
         assert!(response_result.is_ok());
 
         let response = response_result.unwrap();
@@ -286,14 +298,14 @@ mod tests {
         file.read_to_end(&mut file_content_create_by_post_request)
             .expect("Failed to read test file");
 
-        assert_eq!(response.status_code, HttpResponseStatusCode::Created);
+        assert_eq!(response.status_code, ResponseCode::Created);
         assert_eq!(file_content_create_by_post_request, file_data);
     }
 
     #[test]
     fn test_invalid_post_response() {
         let request = request_post_builder("/nonexistent/test").build();
-        let response_result = parse_http_response(&request);
+        let response_result = build_http_response(&request);
         assert!(response_result.is_err());
     }
 }

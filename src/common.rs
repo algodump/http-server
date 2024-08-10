@@ -1,16 +1,15 @@
 use std::{
     collections::HashMap,
-    fmt::format,
     io::{Read, Write},
 };
 
 use anyhow::{anyhow, Result};
+use bytesize::ByteSize;
 use mime_guess::from_path;
 use thiserror::Error;
-use bytesize::ByteSize;
 
 #[derive(Error, Debug, PartialEq)]
-pub enum HttpError {
+pub enum InternalHttpError {
     #[error("Unsupported HTTP version {0}")]
     UnsupportedHttpVersion(String),
     #[error("Unsupported HTTP method {0}")]
@@ -31,14 +30,20 @@ pub enum HttpError {
     HeaderOverflow,
     #[error("Encountered invalid UTF8 while parsing HTTP request")]
     InvalidUTF8Char,
-    #[error("Request body size exceeded maximum allowed size of {}", MAX_REQUEST_BODY_SIZE)]
+    #[error(
+        "Request body size exceeded maximum allowed size of {}",
+        MAX_REQUEST_BODY_SIZE
+    )]
     BodySizeLimit,
-    #[error("Request header size exceeded maximum allowed size {}", MAX_HEADER_SIZE)]
+    #[error(
+        "Request header size exceeded maximum allowed size {}",
+        MAX_HEADER_SIZE
+    )]
     HeaderSizeLimit,
 }
 
 pub const MAX_HEADERS_AMOUNT: usize = 10_000;
-pub const MAX_REQUEST_BODY_SIZE : u64 = ByteSize::gb(2).as_u64();
+pub const MAX_REQUEST_BODY_SIZE: u64 = ByteSize::gb(2).as_u64();
 pub const MAX_HEADER_SIZE: u64 = ByteSize::kb(8).as_u64();
 
 pub trait HttpStream: Read + Write {}

@@ -4,13 +4,12 @@ use std::{
     str::FromStr,
 };
 
-use ::log::trace;
-
 use crate::common::{
-    HttpError, HttpMessageContent, HttpStream, MAX_HEADERS_AMOUNT, MAX_HEADER_SIZE,
+    HttpMessageContent, HttpStream, InternalHttpError, MAX_HEADERS_AMOUNT, MAX_HEADER_SIZE,
     MAX_REQUEST_BODY_SIZE,
 };
 use anyhow::{anyhow, Context, Result};
+use log::trace;
 
 #[derive(Debug, enum_utils::FromStr, Clone, Copy, PartialEq)]
 pub enum HttpRequestMethod {
@@ -98,17 +97,17 @@ fn get_http_version(version_line: &str) -> Result<String> {
     let version = ["1.1"]
         .iter()
         .find(|&&version| version_line.ends_with(version))
-        .ok_or_else(|| HttpError::UnsupportedHttpVersion(version_line.to_string()))?;
+        .ok_or_else(|| InternalHttpError::UnsupportedHttpVersion(version_line.to_string()))?;
     return Ok(version.to_string());
 }
 
 fn parse_header(header: &String) -> Result<(String, String)> {
     if header.len() as u64 > MAX_HEADER_SIZE {
-        return Err(anyhow!(HttpError::HeaderSizeLimit));
+        return Err(anyhow!(InternalHttpError::HeaderSizeLimit));
     }
 
     let Some(header_parsed) = header.split_once(':') else {
-        return Err(anyhow!(HttpError::WrongHeaderFormat));
+        return Err(anyhow!(InternalHttpError::WrongHeaderFormat));
     };
 
     trace!("Parsed header: {} {}", header_parsed.0, header_parsed.1);
@@ -125,7 +124,7 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
     let mut request_line = String::new();
     buf_reader
         .read_line(&mut request_line)
-        .context(HttpError::InvalidUTF8Char)?;
+        .context(InternalHttpError::InvalidUTF8Char)?;
 
     let mut request_line_iter = request_line.split_ascii_whitespace();
     let (Some(method), Some(resource), Some(version)) = (
@@ -133,14 +132,14 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
         request_line_iter.next(),
         request_line_iter.next(),
     ) else {
-        return Err(anyhow!(HttpError::MalformedRequestLine(
+        return Err(anyhow!(InternalHttpError::MalformedRequestLine(
             request_line.to_string()
         )));
     };
 
     // TODO: verify resource
     let method = HttpRequestMethod::from_str(method)
-        .map_err(|_| anyhow!(HttpError::InvalidMethodType(method.to_string())))?;
+        .map_err(|_| anyhow!(InternalHttpError::InvalidMethodType(method.to_string())))?;
     let version = get_http_version(version)?;
 
     // Parse headers
@@ -150,7 +149,7 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
         // TODO: Infinite loop possible if EOF is never provide
         buf_reader
             .read_line(&mut line)
-            .context(HttpError::InvalidUTF8Char)?;
+            .context(InternalHttpError::InvalidUTF8Char)?;
         let trimmed = line.trim_end().to_string();
 
         if trimmed.is_empty() {
@@ -161,7 +160,7 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
         headers.insert(header.0, header.1);
 
         if headers.len() > MAX_HEADERS_AMOUNT {
-            return Err(anyhow!(HttpError::HeaderOverflow));
+            return Err(anyhow!(InternalHttpError::HeaderOverflow));
         }
     }
 
@@ -175,7 +174,7 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
 
     // Allow max body length up to 2 GB
     if content_length > MAX_REQUEST_BODY_SIZE {
-        return Err(anyhow!(HttpError::BodySizeLimit));
+        return Err(anyhow!(InternalHttpError::BodySizeLimit));
     }
 
     let mut body = Vec::new();

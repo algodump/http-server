@@ -11,7 +11,6 @@ mod request;
 mod response;
 
 static CONSOLE_LOGGER: ConsoleLogger = ConsoleLogger;
-
 struct ConsoleLogger;
 
 impl log::Log for ConsoleLogger {
