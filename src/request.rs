@@ -23,6 +23,7 @@ pub enum HttpRequestMethod {
     CONNECT,
 }
 
+#[derive(Debug)]
 pub struct HttpRequestLine {
     method: HttpRequestMethod,
     resource: String,
@@ -39,6 +40,7 @@ impl HttpRequestLine {
     }
 }
 
+#[derive(Debug)]
 pub struct HttpRequest {
     request_line: HttpRequestLine,
     content: HttpMessageContent,

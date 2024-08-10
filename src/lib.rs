@@ -2,15 +2,21 @@ use anyhow::{Context, Result};
 
 use common::HttpStream;
 use request::parse_http_request;
-use response::build_http_response;
+use response::{build_http_response, build_http_response_for_invalid_request};
 
 pub mod common;
 pub mod request;
 mod response;
 
 pub fn handel_connection(stream: &mut impl HttpStream) -> Result<()> {
-    let http_request = parse_http_request(stream)?;
-    let http_response = build_http_response(&http_request)?;
+    let http_request = parse_http_request(stream);
+    let http_response = if http_request.is_err() {
+        let http_request_error = http_request.unwrap_err();
+        build_http_response_for_invalid_request(http_request_error)
+    } else {
+        // TODO: build_http_response should always return HttpResponse 
+        build_http_response(&http_request.unwrap()).unwrap()
+    };
 
     http_response
         .write_to(stream)

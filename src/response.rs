@@ -1,16 +1,23 @@
 use std::{collections::HashMap, fs, io::Write};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Error, Result};
 use log::{error, trace};
 
-use crate::common::{HttpMessageContent, HttpStream, InternalHttpError};
+use crate::common::{HttpMessageContent, HttpStream, InternalHttpError, DEFAULT_HTTP_VERSION};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResponseCode {
     OK = 200,
     Created = 201,
+    // Client Error
+    BadRequest = 400,
     NotFound = 404,
+    RequestHeaderFieldsTooLarge = 431,
+    InternalServerError = 500,
+    // TODO: remove later as this is not an actual HTTP response code,
+    //      just used for internal purposes
+    Undefined = 1000,
 }
 
 impl ToString for ResponseCode {
@@ -38,6 +45,19 @@ impl HttpResponseBuilder {
         })
     }
 
+    pub fn default() -> Self {
+        Self(HttpResponse {
+            status_code: ResponseCode::Undefined,
+            version: String::from(DEFAULT_HTTP_VERSION),
+            content: HttpMessageContent::new(HashMap::new(), Vec::new()),
+        })
+    }
+
+    pub fn status_code(mut self, status_code: ResponseCode) -> Self {
+        self.0.status_code = status_code;
+        self
+    }
+
     pub fn header(
         mut self,
         header_name: impl Into<String>,
@@ -56,6 +76,7 @@ impl HttpResponseBuilder {
     }
 
     pub fn build(self) -> HttpResponse {
+        debug_assert_ne!(self.0.status_code, ResponseCode::Undefined);
         self.0
     }
 }
@@ -81,6 +102,24 @@ impl HttpResponse {
 
     pub fn content(&self) -> &HttpMessageContent {
         &self.content
+    }
+}
+
+pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResponse {
+    match mb_http_error.downcast_ref::<InternalHttpError>() {
+        Some(error) => match error {
+            InternalHttpError::HeaderSizeLimit => HttpResponseBuilder::default()
+                .status_code(ResponseCode::RequestHeaderFieldsTooLarge)
+                .build(),
+            _ => {
+                return HttpResponseBuilder::default()
+                    .status_code(ResponseCode::BadRequest)
+                    .build()
+            }
+        },
+        None => HttpResponseBuilder::default()
+            .status_code(ResponseCode::InternalServerError)
+            .build(),
     }
 }
 

@@ -45,10 +45,12 @@ pub enum InternalHttpError {
 pub const MAX_HEADERS_AMOUNT: usize = 10_000;
 pub const MAX_REQUEST_BODY_SIZE: u64 = ByteSize::gb(2).as_u64();
 pub const MAX_HEADER_SIZE: u64 = ByteSize::kb(8).as_u64();
+pub const DEFAULT_HTTP_VERSION: &str = "1.1";
 
 pub trait HttpStream: Read + Write {}
 impl<T: Read + Write> HttpStream for T {}
 
+#[derive(Debug)]
 pub struct HttpMessageContent {
     headers: HashMap<String, String>,
     body: Vec<u8>,
