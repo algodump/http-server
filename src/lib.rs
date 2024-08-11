@@ -14,8 +14,7 @@ pub fn handel_connection(stream: &mut impl HttpStream) -> Result<()> {
         let http_request_error = http_request.unwrap_err();
         build_http_response_for_invalid_request(http_request_error)
     } else {
-        // TODO: build_http_response should always return HttpResponse 
-        build_http_response(&http_request.unwrap()).unwrap()
+        build_http_response(&http_request.unwrap())
     };
 
     http_response

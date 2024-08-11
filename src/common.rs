@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use bytesize::ByteSize;
+use log::trace;
 use mime_guess::from_path;
 use thiserror::Error;
 
@@ -94,8 +95,10 @@ impl HttpMessageContent {
 
     pub fn get_content_type(&self, path_to_resource: &str) -> Result<String> {
         if let Some(content_type) = self.headers.get("content-type") {
+            // TODO: verify this, at it might not be supported by the server
             return Ok(content_type.clone());
         } else {
+            trace!("Content type wasn't provided by the client, determine content type based on the resource name");
             let mime_type = determine_content_type(&path_to_resource)
                 .ok_or_else(|| anyhow!("Failed to determine MIME type"))?
                 .to_string();

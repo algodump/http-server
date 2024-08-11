@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs, io::Write};
 
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{Error, Result};
 use log::{error, trace};
 
 use crate::common::{HttpMessageContent, HttpStream, InternalHttpError, DEFAULT_HTTP_VERSION};
@@ -10,11 +10,19 @@ use crate::request::{HttpRequest, HttpRequestMethod};
 pub enum ResponseCode {
     OK = 200,
     Created = 201,
-    // Client Error
+
+    // Client Errors
     BadRequest = 400,
     NotFound = 404,
+    ContentTooLarge = 413,
+    UnsupportedMediaType = 415,
     RequestHeaderFieldsTooLarge = 431,
+
+    // Server Errors
     InternalServerError = 500,
+    NotImplemented = 501,
+    HTTPVersionNotSupported = 505,
+
     // TODO: remove later as this is not an actual HTTP response code,
     //      just used for internal purposes
     Undefined = 1000,
@@ -106,10 +114,19 @@ impl HttpResponse {
 }
 
 pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResponse {
+    trace!("Http error: {:?}", mb_http_error);
     match mb_http_error.downcast_ref::<InternalHttpError>() {
         Some(error) => match error {
+            // Client Errors
+            InternalHttpError::BodySizeLimit => HttpResponseBuilder::default()
+                .status_code(ResponseCode::ContentTooLarge)
+                .build(),
             InternalHttpError::HeaderSizeLimit => HttpResponseBuilder::default()
                 .status_code(ResponseCode::RequestHeaderFieldsTooLarge)
+                .build(),
+            // Server errors
+            InternalHttpError::UnsupportedHttpVersion(_) => HttpResponseBuilder::default()
+                .status_code(ResponseCode::HTTPVersionNotSupported)
                 .build(),
             _ => {
                 return HttpResponseBuilder::default()
@@ -123,7 +140,7 @@ pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResp
     }
 }
 
-pub fn build_http_response(http_request: &HttpRequest) -> Result<HttpResponse> {
+pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
     let resource = http_request.get_resource();
     let version = http_request.get_version();
 
@@ -133,77 +150,101 @@ pub fn build_http_response(http_request: &HttpRequest) -> Result<HttpResponse> {
         resource
     );
 
-    let http_ok_response_builder = HttpResponseBuilder::new(ResponseCode::OK, &version);
-    let http_not_found_response_builder =
-        HttpResponseBuilder::new(ResponseCode::NotFound, &version);
+    let ok_response_builder = HttpResponseBuilder::new(ResponseCode::OK, &version);
+    let not_found_response_builder = HttpResponseBuilder::new(ResponseCode::NotFound, &version);
+    let internal_server_error_response_builder =
+        HttpResponseBuilder::new(ResponseCode::InternalServerError, &version);
 
     match http_request.get_method() {
         HttpRequestMethod::GET => match resource.as_str() {
             "/" => {
-                return Ok(http_ok_response_builder.build());
+                return ok_response_builder.build();
             }
             "/user-agent" => {
-                let Some(user_agent) = http_request.content().get_header("user-agent") else {
-                    bail!("Can't find user-agent");
-                };
-                let user_agent_response = http_ok_response_builder
-                    .header("content-type", "text/plain")
-                    .body(user_agent.as_bytes())
-                    .build();
+                let user_agent_response =
+                    if let Some(user_agent) = http_request.content().get_header("user-agent") {
+                        ok_response_builder
+                            .header("content-type", "text/plain")
+                            .body(user_agent.as_bytes())
+                            .build()
+                    } else {
+                        not_found_response_builder.build()
+                    };
 
-                return Ok(user_agent_response);
+                return user_agent_response;
             }
             _ => {
                 if let Some(echo) = resource.strip_prefix("/echo/") {
-                    let response_echo_ok = http_ok_response_builder
+                    let echo_response = ok_response_builder
                         .header("content-type", "text/plain")
                         .body(echo.as_bytes())
                         .build();
 
-                    return Ok(response_echo_ok);
+                    return echo_response;
                 } else if let Some(file_path) = resource.strip_prefix("/files/") {
                     // FIXME: handel file versions properly, for now it will be just discarded
                     // EXAMPLE: fontawesome-webfont.woff?v=4.7.0
                     let path_end = file_path.find("?v=").unwrap_or(file_path.len());
                     let processed_file_path = &file_path[..path_end];
-                    let file_content_res = fs::read(processed_file_path);
 
-                    let get_file_response = if let Ok(file_content) = file_content_res {
-                        let content_type = http_request
-                            .content()
-                            .get_content_type(processed_file_path)?;
-                        trace!("Content type: {}", content_type);
-
-                        http_ok_response_builder
-                            .header("content-type", content_type)
-                            .body(&file_content)
-                            .build()
-                    } else {
+                    let mb_file_content = fs::read(processed_file_path);
+                    let Ok(file_content) = mb_file_content else {
                         error!(
                             "Can't read `{:?}` error = {:?}",
                             processed_file_path,
-                            file_content_res.unwrap_err()
+                            mb_file_content.unwrap_err()
                         );
-                        http_not_found_response_builder.build()
+                        return not_found_response_builder.build();
                     };
 
-                    return Ok(get_file_response);
+                    let Ok(content_type) =
+                        http_request.content().get_content_type(processed_file_path)
+                    else {
+                        error!("Unsupported media type: {}", resource);
+                        return HttpResponseBuilder::new(
+                            ResponseCode::UnsupportedMediaType,
+                            &version,
+                        )
+                        .build();
+                    };
+                    trace!("Content type: {}", content_type);
+
+                    return ok_response_builder
+                        .header("content-type", content_type)
+                        .body(&file_content)
+                        .build();
                 }
-                return Err(anyhow!(InternalHttpError::GetFailed(resource)));
+                error!("GET: Unhandled response message: resource - {:?}", resource);
+                return internal_server_error_response_builder.build();
             }
         },
         HttpRequestMethod::POST => {
             if let Some(file_path) = resource.strip_prefix("/files/") {
-                let mut file = fs::File::create(file_path).context("Failed to create file")?;
-                file.write_all(&http_request.content().get_body())
-                    .context("POST request failed")?;
-                let created_response =
-                    HttpResponseBuilder::new(ResponseCode::Created, &version).build();
-                return Ok(created_response);
+                let mb_file = fs::File::create(file_path);
+                let Ok(mut file) = mb_file else {
+                    error!(
+                        "POST: Failed to create a file: {:?}. {:?}",
+                        file_path,
+                        mb_file.unwrap_err()
+                    );
+                    return internal_server_error_response_builder.build();
+                };
+
+                let mb_success = file.write_all(&http_request.content().get_body());
+                let Ok(_) = mb_success else {
+                    error!(
+                        "POST: Failed to write to file: {:?}. {:?}",
+                        file_path,
+                        mb_success.unwrap_err()
+                    );
+                    return internal_server_error_response_builder.build();
+                };
+
+                return HttpResponseBuilder::new(ResponseCode::Created, &version).build();
             }
-            return Err(anyhow!(InternalHttpError::PostFailed(resource)));
+            return internal_server_error_response_builder.build();
         }
-        _ => todo!("Not implemented"),
+        _ => return HttpResponseBuilder::new(ResponseCode::NotImplemented, &version).build(),
     }
 }
 
@@ -217,7 +258,9 @@ mod tests {
         io::Read,
     };
 
-    use crate::request::{HttpRequestBuilder, HttpRequestLine, HttpRequestMethod};
+    use crate::{
+        request::{HttpRequestBuilder, HttpRequestLine, HttpRequestMethod},
+    };
 
     // BUILDERS
     fn request_get_builder(resource: &str) -> HttpRequestBuilder {
@@ -240,11 +283,8 @@ mod tests {
     #[test]
     fn test_empty_get_response() {
         let request = request_get_builder("/").build();
-        let response_result = build_http_response(&request);
+        let response = build_http_response(&request);
 
-        assert!(response_result.is_ok());
-
-        let response = response_result.unwrap();
         assert_eq!(response.status_code, ResponseCode::OK);
     }
 
@@ -254,10 +294,9 @@ mod tests {
         let request = request_get_builder("/user-agent")
             .header("user-agent", user_agent)
             .build();
-        let response_result = build_http_response(&request);
-        assert!(response_result.is_ok());
+        let response = build_http_response(&request);
 
-        let response = response_result.unwrap();
+        let response = response;
         assert_eq!(response.status_code, ResponseCode::OK);
         assert!(response
             .content
@@ -268,10 +307,8 @@ mod tests {
     #[test]
     fn test_user_echo_response() {
         let request = request_get_builder("/echo/test").build();
-        let response_result = build_http_response(&request);
-        assert!(response_result.is_ok());
+        let response = build_http_response(&request);
 
-        let response = response_result.unwrap();
         assert_eq!(response.status_code, ResponseCode::OK);
         assert!(response.content.get_body().starts_with(b"test"));
     }
@@ -290,10 +327,8 @@ mod tests {
 
         let request =
             request_get_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
-        let response_result = build_http_response(&request);
-        assert!(response_result.is_ok());
+        let response = build_http_response(&request);
 
-        let response = response_result.unwrap();
         assert_eq!(response.status_code, ResponseCode::OK);
         assert_eq!(
             response.content.get_header("content-type").unwrap(),
@@ -305,18 +340,17 @@ mod tests {
     #[test]
     fn test_not_found_response() {
         let request = request_get_builder("/files/nonexistent_file").build();
-        let response_result = build_http_response(&request);
-        assert!(response_result.is_ok());
+        let response = build_http_response(&request);
 
-        let response = response_result.unwrap();
         assert_eq!(response.status_code, ResponseCode::NotFound);
     }
 
     #[test]
     fn test_invalid_get_response() {
         let request = request_get_builder("/nonexistent/test").build();
-        let response_result = build_http_response(&request);
-        assert!(response_result.is_err());
+        let response = build_http_response(&request);
+
+        assert_eq!(response.status_code, ResponseCode::InternalServerError);
     }
 
     // POST REQUEST TESTS
@@ -328,10 +362,8 @@ mod tests {
         let request = request_post_builder(format!("/files/{}", tmp_file_path.display()).as_str())
             .body(&file_data)
             .build();
-        let response_result = build_http_response(&request);
-        assert!(response_result.is_ok());
+        let response = build_http_response(&request);
 
-        let response = response_result.unwrap();
         let mut file = fs::File::open(&tmp_file_path).expect("POST request failed to create file");
         let mut file_content_create_by_post_request = Vec::new();
         file.read_to_end(&mut file_content_create_by_post_request)
@@ -344,7 +376,8 @@ mod tests {
     #[test]
     fn test_invalid_post_response() {
         let request = request_post_builder("/nonexistent/test").build();
-        let response_result = build_http_response(&request);
-        assert!(response_result.is_err());
+        let response = build_http_response(&request);
+
+        assert_eq!(response.status_code, ResponseCode::InternalServerError);
     }
 }
