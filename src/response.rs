@@ -15,6 +15,7 @@ pub enum ResponseCode {
     BadRequest = 400,
     NotFound = 404,
     ContentTooLarge = 413,
+    URITooLong = 414,
     UnsupportedMediaType = 415,
     RequestHeaderFieldsTooLarge = 431,
 
@@ -113,8 +114,10 @@ impl HttpResponse {
     }
 }
 
+// TODO: make it testable, for now it's not
 pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResponse {
     trace!("Http error: {:?}", mb_http_error);
+    // TODO: mb embed the http status code in the InternalHttpError itself
     match mb_http_error.downcast_ref::<InternalHttpError>() {
         Some(error) => match error {
             // Client Errors
@@ -123,6 +126,9 @@ pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResp
                 .build(),
             InternalHttpError::HeaderSizeLimit => HttpResponseBuilder::default()
                 .status_code(ResponseCode::RequestHeaderFieldsTooLarge)
+                .build(),
+            InternalHttpError::URISizeLimit => HttpResponseBuilder::default()
+                .status_code(ResponseCode::URITooLong)
                 .build(),
             // Server errors
             InternalHttpError::UnsupportedHttpVersion(_) => HttpResponseBuilder::default()
@@ -258,9 +264,7 @@ mod tests {
         io::Read,
     };
 
-    use crate::{
-        request::{HttpRequestBuilder, HttpRequestLine, HttpRequestMethod},
-    };
+    use crate::request::{HttpRequestBuilder, HttpRequestLine, HttpRequestMethod};
 
     // BUILDERS
     fn request_get_builder(resource: &str) -> HttpRequestBuilder {

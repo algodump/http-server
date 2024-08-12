@@ -6,7 +6,7 @@ use std::{
 
 use crate::common::{
     HttpMessageContent, HttpStream, InternalHttpError, MAX_HEADERS_AMOUNT, MAX_HEADER_SIZE,
-    MAX_REQUEST_BODY_SIZE,
+    MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH
 };
 use anyhow::{anyhow, Context, Result};
 use log::trace;
@@ -139,7 +139,10 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
         )));
     };
 
-    // TODO: verify resource
+    if resource.len() as u16 > MAX_URI_LENGTH {
+        return Err(anyhow!(InternalHttpError::URISizeLimit));
+    }
+
     let method = HttpRequestMethod::from_str(method)
         .map_err(|_| anyhow!(InternalHttpError::InvalidMethodType(method.to_string())))?;
     let version = get_http_version(version)?;

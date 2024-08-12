@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use bytesize::ByteSize;
 use log::trace;
 use mime_guess::from_path;
 use thiserror::Error;
@@ -41,12 +40,18 @@ pub enum InternalHttpError {
         MAX_HEADER_SIZE
     )]
     HeaderSizeLimit,
+    #[error(
+        "Request URI length exceeded maximum allowed length {}",
+        MAX_URI_LENGTH
+    )]
+    URISizeLimit
 }
 
 pub const MAX_HEADERS_AMOUNT: usize = 10_000;
-pub const MAX_REQUEST_BODY_SIZE: u64 = ByteSize::gb(2).as_u64();
-pub const MAX_HEADER_SIZE: u64 = ByteSize::kb(8).as_u64();
+pub const MAX_REQUEST_BODY_SIZE: u64 = u64::MAX / 2; // 2 GB
+pub const MAX_HEADER_SIZE: u64 = (u16::MAX / 2) as u64; // 8 KB
 pub const DEFAULT_HTTP_VERSION: &str = "1.1";
+pub const MAX_URI_LENGTH : u16 = u16::MAX;
 
 pub trait HttpStream: Read + Write {}
 impl<T: Read + Write> HttpStream for T {}
