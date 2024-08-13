@@ -5,9 +5,10 @@ use std::{
 };
 
 use crate::common::{
-    HttpMessageContent, HttpStream, InternalHttpError, MAX_HEADERS_AMOUNT, MAX_HEADER_SIZE,
-    MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH
+    ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, MAX_HEADERS_AMOUNT,
+    MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH,
 };
+
 use anyhow::{anyhow, Context, Result};
 use log::trace;
 
@@ -99,13 +100,15 @@ fn get_http_version(version_line: &str) -> Result<String> {
     let version = ["1.1"]
         .iter()
         .find(|&&version| version_line.ends_with(version))
-        .ok_or_else(|| InternalHttpError::UnsupportedHttpVersion(version_line.to_string()))?;
+        .ok_or_else(|| {
+            InternalHttpError::KnownError(ErrorCode::HTTPVersionNotSupported)})?;
+    
     return Ok(version.to_string());
 }
 
 fn parse_header(header: &String) -> Result<(String, String)> {
     if header.len() as u64 > MAX_HEADER_SIZE {
-        return Err(anyhow!(InternalHttpError::HeaderSizeLimit));
+        return Err(anyhow!(InternalHttpError::KnownError(ErrorCode::RequestHeaderFieldsTooLarge)));
     }
 
     let Some(header_parsed) = header.split_once(':') else {
@@ -140,11 +143,11 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
     };
 
     if resource.len() as u16 > MAX_URI_LENGTH {
-        return Err(anyhow!(InternalHttpError::URISizeLimit));
+        return Err(anyhow!(InternalHttpError::KnownError(ErrorCode::URITooLong)));
     }
 
     let method = HttpRequestMethod::from_str(method)
-        .map_err(|_| anyhow!(InternalHttpError::InvalidMethodType(method.to_string())))?;
+        .map_err(|_| anyhow!(InternalHttpError::KnownError(ErrorCode::NotImplemented)))?;
     let version = get_http_version(version)?;
 
     // Parse headers
@@ -179,7 +182,7 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
 
     // Allow max body length up to 2 GB
     if content_length > MAX_REQUEST_BODY_SIZE {
-        return Err(anyhow!(InternalHttpError::BodySizeLimit));
+        return Err(anyhow!(InternalHttpError::KnownError(ErrorCode::ContentTooLarge)));
     }
 
     let mut body = Vec::new();

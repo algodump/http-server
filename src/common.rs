@@ -8,50 +8,65 @@ use log::trace;
 use mime_guess::from_path;
 use thiserror::Error;
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SuccessCode {
+    OK = 200,
+    Created = 201,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ErrorCode {
+    // Client Errors
+    BadRequest = 400,
+    NotFound = 404,
+    ContentTooLarge = 413,
+    URITooLong = 414,
+    UnsupportedMediaType = 415,
+    RequestHeaderFieldsTooLarge = 431,
+
+    // Server Errors
+    InternalServerError = 500,
+    NotImplemented = 501,
+    HTTPVersionNotSupported = 505,
+
+    // TODO: remove later as this is not an actual HTTP response code,
+    //      just used for internal purposes
+    Undefined = 1000,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ResponseCode {
+    Success(SuccessCode),
+    Error(ErrorCode),
+}
+impl ResponseCode {
+    pub fn get_code_value(&self) -> u16 {
+        match self {
+            ResponseCode::Success(code) => return *code as u16,
+            ResponseCode::Error(code) => return *code as u16,
+        }
+    }
+}
+
+#[derive(Error, Debug)]
 pub enum InternalHttpError {
-    #[error("Unsupported HTTP version {0}")]
-    UnsupportedHttpVersion(String),
-    #[error("Unsupported HTTP method {0}")]
-    UnsupportedHttpMethod(String),
-    #[error("Empty HTTP request")]
-    EmptyHttpRequest,
+    #[error("{}", 0.to_string())]
+    KnownError(ErrorCode),
     #[error("Malformed HTTP request line: `{0}`")]
     MalformedRequestLine(String),
-    #[error("Invalid HTTP method type: {0}")]
-    InvalidMethodType(String),
     #[error("Wrong Header Format")]
     WrongHeaderFormat,
-    #[error("Can't find requested resources: {0}")]
-    GetFailed(String),
-    #[error("Can't post requested resources: {0}")]
-    PostFailed(String),
     #[error("Exceeded maximum amount of headers {}", MAX_HEADERS_AMOUNT)]
     HeaderOverflow,
     #[error("Encountered invalid UTF8 while parsing HTTP request")]
     InvalidUTF8Char,
-    #[error(
-        "Request body size exceeded maximum allowed size of {}",
-        MAX_REQUEST_BODY_SIZE
-    )]
-    BodySizeLimit,
-    #[error(
-        "Request header size exceeded maximum allowed size {}",
-        MAX_HEADER_SIZE
-    )]
-    HeaderSizeLimit,
-    #[error(
-        "Request URI length exceeded maximum allowed length {}",
-        MAX_URI_LENGTH
-    )]
-    URISizeLimit
 }
 
 pub const MAX_HEADERS_AMOUNT: usize = 10_000;
 pub const MAX_REQUEST_BODY_SIZE: u64 = u64::MAX / 2; // 2 GB
 pub const MAX_HEADER_SIZE: u64 = (u16::MAX / 2) as u64; // 8 KB
 pub const DEFAULT_HTTP_VERSION: &str = "1.1";
-pub const MAX_URI_LENGTH : u16 = u16::MAX;
+pub const MAX_URI_LENGTH: u16 = u16::MAX;
 
 pub trait HttpStream: Read + Write {}
 impl<T: Read + Write> HttpStream for T {}

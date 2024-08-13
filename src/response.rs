@@ -3,37 +3,27 @@ use std::{collections::HashMap, fs, io::Write};
 use anyhow::{Error, Result};
 use log::{error, trace};
 
-use crate::common::{HttpMessageContent, HttpStream, InternalHttpError, DEFAULT_HTTP_VERSION};
+use crate::common::{
+    ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, ResponseCode, SuccessCode,
+    DEFAULT_HTTP_VERSION,
+};
 use crate::request::{HttpRequest, HttpRequestMethod};
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ResponseCode {
-    OK = 200,
-    Created = 201,
-
-    // Client Errors
-    BadRequest = 400,
-    NotFound = 404,
-    ContentTooLarge = 413,
-    URITooLong = 414,
-    UnsupportedMediaType = 415,
-    RequestHeaderFieldsTooLarge = 431,
-
-    // Server Errors
-    InternalServerError = 500,
-    NotImplemented = 501,
-    HTTPVersionNotSupported = 505,
-
-    // TODO: remove later as this is not an actual HTTP response code,
-    //      just used for internal purposes
-    Undefined = 1000,
-}
 
 impl ToString for ResponseCode {
     fn to_string(&self) -> String {
+        fn split_camel_case(s: String) -> String {
+            let mut result = String::new();
+            for (i, c) in s.chars().enumerate() {
+                if c.is_uppercase() && i != 0 {
+                    result.push(' ');
+                }
+                result.push(c);
+            }
+            result
+        }
         match self {
-            ResponseCode::NotFound => return String::from("Not Found"),
-            _ => return String::from(format!("{:?}", self)),
+            ResponseCode::Success(code) => return split_camel_case(format!("{:?}", code)),
+            ResponseCode::Error(code) => return split_camel_case(format!("{:?}", code)),
         }
     }
 }
@@ -56,7 +46,7 @@ impl HttpResponseBuilder {
 
     pub fn default() -> Self {
         Self(HttpResponse {
-            status_code: ResponseCode::Undefined,
+            status_code: ResponseCode::Error(ErrorCode::Undefined),
             version: String::from(DEFAULT_HTTP_VERSION),
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
         })
@@ -85,7 +75,10 @@ impl HttpResponseBuilder {
     }
 
     pub fn build(self) -> HttpResponse {
-        debug_assert_ne!(self.0.status_code, ResponseCode::Undefined);
+        debug_assert_ne!(
+            self.0.status_code,
+            ResponseCode::Error(ErrorCode::Undefined)
+        );
         self.0
     }
 }
@@ -95,7 +88,7 @@ impl HttpResponse {
         let mut response = format!(
             "HTTP/{} {} {}\r\n",
             self.version,
-            self.status_code as u16,
+            self.status_code.get_code_value(),
             self.status_code.to_string()
         );
 
@@ -117,31 +110,19 @@ impl HttpResponse {
 // TODO: make it testable, for now it's not
 pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResponse {
     trace!("Http error: {:?}", mb_http_error);
-    // TODO: mb embed the http status code in the InternalHttpError itself
     match mb_http_error.downcast_ref::<InternalHttpError>() {
         Some(error) => match error {
-            // Client Errors
-            InternalHttpError::BodySizeLimit => HttpResponseBuilder::default()
-                .status_code(ResponseCode::ContentTooLarge)
-                .build(),
-            InternalHttpError::HeaderSizeLimit => HttpResponseBuilder::default()
-                .status_code(ResponseCode::RequestHeaderFieldsTooLarge)
-                .build(),
-            InternalHttpError::URISizeLimit => HttpResponseBuilder::default()
-                .status_code(ResponseCode::URITooLong)
-                .build(),
-            // Server errors
-            InternalHttpError::UnsupportedHttpVersion(_) => HttpResponseBuilder::default()
-                .status_code(ResponseCode::HTTPVersionNotSupported)
+            InternalHttpError::KnownError(http_error_code) => HttpResponseBuilder::default()
+                .status_code(ResponseCode::Error(*http_error_code))
                 .build(),
             _ => {
                 return HttpResponseBuilder::default()
-                    .status_code(ResponseCode::BadRequest)
+                    .status_code(ResponseCode::Error(ErrorCode::BadRequest))
                     .build()
             }
         },
         None => HttpResponseBuilder::default()
-            .status_code(ResponseCode::InternalServerError)
+            .status_code(ResponseCode::Error(ErrorCode::InternalServerError))
             .build(),
     }
 }
@@ -156,10 +137,14 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
         resource
     );
 
-    let ok_response_builder = HttpResponseBuilder::new(ResponseCode::OK, &version);
-    let not_found_response_builder = HttpResponseBuilder::new(ResponseCode::NotFound, &version);
-    let internal_server_error_response_builder =
-        HttpResponseBuilder::new(ResponseCode::InternalServerError, &version);
+    let ok_response_builder =
+        HttpResponseBuilder::new(ResponseCode::Success(SuccessCode::OK), &version);
+    let not_found_response_builder =
+        HttpResponseBuilder::new(ResponseCode::Error(ErrorCode::NotFound), &version);
+    let internal_server_error_response_builder = HttpResponseBuilder::new(
+        ResponseCode::Error(ErrorCode::InternalServerError),
+        &version,
+    );
 
     match http_request.get_method() {
         HttpRequestMethod::GET => match resource.as_str() {
@@ -208,7 +193,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                     else {
                         error!("Unsupported media type: {}", resource);
                         return HttpResponseBuilder::new(
-                            ResponseCode::UnsupportedMediaType,
+                            ResponseCode::Error(ErrorCode::UnsupportedMediaType),
                             &version,
                         )
                         .build();
@@ -246,17 +231,27 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                     return internal_server_error_response_builder.build();
                 };
 
-                return HttpResponseBuilder::new(ResponseCode::Created, &version).build();
+                return HttpResponseBuilder::new(
+                    ResponseCode::Success(SuccessCode::Created),
+                    &version,
+                )
+                .build();
             }
             return internal_server_error_response_builder.build();
         }
-        _ => return HttpResponseBuilder::new(ResponseCode::NotImplemented, &version).build(),
+        _ => {
+            return HttpResponseBuilder::new(
+                ResponseCode::Error(ErrorCode::NotImplemented),
+                &version,
+            )
+            .build()
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_http_response, ResponseCode};
+    use super::{build_http_response, ResponseCode, ErrorCode, SuccessCode};
 
     use std::{
         env::{current_dir, temp_dir},
@@ -289,7 +284,7 @@ mod tests {
         let request = request_get_builder("/").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::OK);
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::OK));
     }
 
     #[test]
@@ -301,7 +296,7 @@ mod tests {
         let response = build_http_response(&request);
 
         let response = response;
-        assert_eq!(response.status_code, ResponseCode::OK);
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::OK));
         assert!(response
             .content
             .get_body()
@@ -313,7 +308,7 @@ mod tests {
         let request = request_get_builder("/echo/test").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::OK);
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::OK));
         assert!(response.content.get_body().starts_with(b"test"));
     }
 
@@ -333,7 +328,7 @@ mod tests {
             request_get_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::OK);
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::OK));
         assert_eq!(
             response.content.get_header("content-type").unwrap(),
             "text/x-rust"
@@ -346,7 +341,7 @@ mod tests {
         let request = request_get_builder("/files/nonexistent_file").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::NotFound);
+        assert_eq!(response.status_code, ResponseCode::Error(ErrorCode::NotFound));
     }
 
     #[test]
@@ -354,7 +349,7 @@ mod tests {
         let request = request_get_builder("/nonexistent/test").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::InternalServerError);
+        assert_eq!(response.status_code, ResponseCode::Error(ErrorCode::InternalServerError));
     }
 
     // POST REQUEST TESTS
@@ -373,7 +368,7 @@ mod tests {
         file.read_to_end(&mut file_content_create_by_post_request)
             .expect("Failed to read test file");
 
-        assert_eq!(response.status_code, ResponseCode::Created);
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Created));
         assert_eq!(file_content_create_by_post_request, file_data);
     }
 
@@ -382,6 +377,6 @@ mod tests {
         let request = request_post_builder("/nonexistent/test").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::InternalServerError);
+        assert_eq!(response.status_code, ResponseCode::Error(ErrorCode::InternalServerError));
     }
 }
