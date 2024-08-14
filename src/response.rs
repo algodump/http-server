@@ -1,13 +1,13 @@
 use std::{collections::HashMap, fs, io::Write};
 
-use anyhow::{Error, Result};
-use log::{error, trace};
-
 use crate::common::{
     ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, ResponseCode, SuccessCode,
     DEFAULT_HTTP_VERSION,
 };
 use crate::request::{HttpRequest, HttpRequestMethod};
+
+use anyhow::{Error, Result};
+use log::{error, trace};
 
 impl ToString for ResponseCode {
     fn to_string(&self) -> String {
@@ -123,7 +123,7 @@ pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResp
         error!("System error: {:?}", mb_http_error);
         return HttpResponseBuilder::default()
             .status_code(ResponseCode::Error(ErrorCode::InternalServerError))
-            .build()
+            .build();
     }
 }
 
@@ -257,7 +257,6 @@ mod tests {
     };
 
     use std::{
-        collections::HashMap,
         env::{current_dir, temp_dir},
         fs,
         io::{Cursor, Read},

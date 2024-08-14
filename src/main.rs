@@ -1,14 +1,15 @@
-use clap::{arg, Parser};
-use log::{error, info, LevelFilter, Metadata, Record};
+pub mod common;
+pub mod request;
+pub mod response;
+
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     str::FromStr,
 };
-use threadpool::ThreadPool;
 
-pub mod common;
-mod request;
-mod response;
+use clap::{arg, Parser};
+use log::{error, info, LevelFilter, Metadata, Record};
+use threadpool::ThreadPool;
 
 static CONSOLE_LOGGER: ConsoleLogger = ConsoleLogger;
 struct ConsoleLogger;
