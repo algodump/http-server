@@ -114,6 +114,9 @@ fn parse_header(header: &String) -> Result<(String, String)> {
     let Some(header_parsed) = header.split_once(':') else {
         return Err(anyhow!(InternalHttpError::WrongHeaderFormat));
     };
+    if header_parsed.0.is_empty() || header_parsed.1.is_empty() {
+        return Err(anyhow!(InternalHttpError::WrongHeaderFormat));
+    }
 
     trace!("Parsed header: {} {}", header_parsed.0, header_parsed.1);
     return Ok((
@@ -142,7 +145,7 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
         )));
     };
 
-    if resource.len() as u16 > MAX_URI_LENGTH {
+    if resource.len() > MAX_URI_LENGTH {
         return Err(anyhow!(InternalHttpError::KnownError(ErrorCode::URITooLong)));
     }
 
@@ -207,7 +210,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_invalid_request() {
+    fn request_parse_invalid() {
         let invalid_requests = [
             // invalid request line
             String::from(""),
@@ -234,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_get_request() {
+    fn request_parse_get() {
         let request =
             b"GET /index.html HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nHello";
         let mut stream = Cursor::new(request.to_vec());
@@ -257,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_request_with_a_lot_of_headers() {
+    fn request_parse_max_allowed_headers() {
         let mut request = String::from("GET / HTTP/1.1\r\n");
         for _ in 0..MAX_HEADERS_AMOUNT {
             let header_name = get_random_string(10);

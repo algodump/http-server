@@ -107,11 +107,9 @@ impl HttpResponse {
     }
 }
 
-// TODO: make it testable, for now it's not
 pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResponse {
-    trace!("Http error: {:?}", mb_http_error);
-    match mb_http_error.downcast_ref::<InternalHttpError>() {
-        Some(error) => match error {
+    if let Some(http_error) = mb_http_error.downcast_ref::<InternalHttpError>() {
+        match http_error {
             InternalHttpError::KnownError(http_error_code) => HttpResponseBuilder::default()
                 .status_code(ResponseCode::Error(*http_error_code))
                 .build(),
@@ -120,10 +118,12 @@ pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResp
                     .status_code(ResponseCode::Error(ErrorCode::BadRequest))
                     .build()
             }
-        },
-        None => HttpResponseBuilder::default()
+        }
+    } else {
+        error!("System error: {:?}", mb_http_error);
+        return HttpResponseBuilder::default()
             .status_code(ResponseCode::Error(ErrorCode::InternalServerError))
-            .build(),
+            .build()
     }
 }
 
@@ -251,15 +251,30 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_http_response, ResponseCode, ErrorCode, SuccessCode};
-
-    use std::{
-        env::{current_dir, temp_dir},
-        fs,
-        io::Read,
+    use super::{
+        build_http_response, build_http_response_for_invalid_request, ErrorCode, HttpResponse,
+        ResponseCode, SuccessCode,
     };
 
-    use crate::request::{HttpRequestBuilder, HttpRequestLine, HttpRequestMethod};
+    use std::{
+        collections::HashMap,
+        env::{current_dir, temp_dir},
+        fs,
+        io::{Cursor, Read},
+    };
+
+    use crate::common::{MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH};
+    use crate::request::{
+        parse_http_request, HttpRequestBuilder, HttpRequestLine, HttpRequestMethod,
+    };
+
+    // UTILS
+    fn generate_error_response_for(invalid_request: &str) -> HttpResponse {
+        let mut stream = Cursor::new(invalid_request.as_bytes().to_vec());
+        let http_error = parse_http_request(&mut stream).unwrap_err();
+        println!("{:?}", http_error);
+        return build_http_response_for_invalid_request(http_error);
+    }
 
     // BUILDERS
     fn request_get_builder(resource: &str) -> HttpRequestBuilder {
@@ -280,7 +295,7 @@ mod tests {
 
     // GET REQUEST TESTS
     #[test]
-    fn test_empty_get_response() {
+    fn response_get_empty() {
         let request = request_get_builder("/").build();
         let response = build_http_response(&request);
 
@@ -288,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn test_user_agent_response() {
+    fn response_get_user_agent() {
         let user_agent = "my-http-server";
         let request = request_get_builder("/user-agent")
             .header("user-agent", user_agent)
@@ -304,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn test_user_echo_response() {
+    fn response_get_echo() {
         let request = request_get_builder("/echo/test").build();
         let response = build_http_response(&request);
 
@@ -313,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_file_response() {
+    fn response_get_file() {
         let file_full_path = current_dir()
             .expect("Failed to get current directory")
             .as_path()
@@ -337,24 +352,115 @@ mod tests {
     }
 
     #[test]
-    fn test_not_found_response() {
+    fn response_get_file_not_found() {
         let request = request_get_builder("/files/nonexistent_file").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::Error(ErrorCode::NotFound));
+        assert_eq!(
+            response.status_code,
+            ResponseCode::Error(ErrorCode::NotFound)
+        );
     }
 
     #[test]
-    fn test_invalid_get_response() {
+    fn response_invalid_get_prefix() {
         let request = request_get_builder("/nonexistent/test").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::Error(ErrorCode::InternalServerError));
+        assert_eq!(
+            response.status_code,
+            ResponseCode::Error(ErrorCode::InternalServerError)
+        );
+    }
+
+    #[test]
+    fn response_with_invalid_request_bad_request() {
+        let invalid_requests = [
+            String::from(""),
+            String::from("GET /"),
+            String::from("GET / HTTP/1.1\r\nWrongHeader=value"),
+        ];
+
+        for invalid_request in invalid_requests {
+            let error_response = generate_error_response_for(&invalid_request);
+            assert_eq!(
+                error_response.status_code,
+                ResponseCode::Error(ErrorCode::BadRequest)
+            );
+        }
+    }
+
+    #[test]
+    fn response_with_invalid_request_internal_server_error() {
+        let invalid_requests = [String::from(
+            "GET / HTTP/1.1\r\nContent-Length : -32\r\n\r\n",
+        )];
+
+        for invalid_request in invalid_requests {
+            let error_response = generate_error_response_for(&invalid_request);
+            assert_eq!(
+                error_response.status_code,
+                ResponseCode::Error(ErrorCode::InternalServerError)
+            );
+        }
+    }
+
+    #[test]
+    fn response_with_invalid_request_content_too_large() {
+        let invalid_request = format!(
+            "GET / HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            MAX_REQUEST_BODY_SIZE + 1
+        );
+        let error_response = generate_error_response_for(&invalid_request);
+
+        assert_eq!(
+            error_response.status_code,
+            ResponseCode::Error(ErrorCode::ContentTooLarge)
+        );
+    }
+
+    #[test]
+    fn response_with_invalid_request_uri_too_long() {
+        let invalid_request = format!(
+            "GET {} HTTP/1.1\r\n",
+            ["X"; (MAX_URI_LENGTH as usize) + 2].concat()
+        );
+        let error_response = generate_error_response_for(&invalid_request);
+
+        assert_eq!(
+            error_response.status_code,
+            ResponseCode::Error(ErrorCode::URITooLong)
+        );
+    }
+
+    #[test]
+    fn response_with_invalid_request_header_too_large() {
+        let invalid_request = format!(
+            "GET / HTTP/1.1\r\ntest:{}",
+            ["X"; MAX_HEADER_SIZE as usize].concat()
+        );
+        let error_response = generate_error_response_for(&invalid_request);
+
+        assert_eq!(
+            error_response.status_code,
+            ResponseCode::Error(ErrorCode::RequestHeaderFieldsTooLarge)
+        );
+    }
+
+    #[test]
+    fn response_with_invalid_request_http_version_not_supported() {
+        let invalid_request = "GET / HTTP/3.0\r\n";
+        let error_response = generate_error_response_for(&invalid_request);
+
+        assert_eq!(
+            error_response.status_code,
+            ResponseCode::Error(ErrorCode::HTTPVersionNotSupported)
+        );
     }
 
     // POST REQUEST TESTS
     #[test]
-    fn test_post_response() {
+    fn response_post() {
         let tmp_file_path = temp_dir().join("test.txt");
         let file_data = b"data for testing POST request".to_vec();
 
@@ -368,15 +474,21 @@ mod tests {
         file.read_to_end(&mut file_content_create_by_post_request)
             .expect("Failed to read test file");
 
-        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Created));
+        assert_eq!(
+            response.status_code,
+            ResponseCode::Success(SuccessCode::Created)
+        );
         assert_eq!(file_content_create_by_post_request, file_data);
     }
 
     #[test]
-    fn test_invalid_post_response() {
+    fn response_post_invalid() {
         let request = request_post_builder("/nonexistent/test").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::Error(ErrorCode::InternalServerError));
+        assert_eq!(
+            response.status_code,
+            ResponseCode::Error(ErrorCode::InternalServerError)
+        );
     }
 }
