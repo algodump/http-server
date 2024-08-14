@@ -28,10 +28,6 @@ pub enum ErrorCode {
     InternalServerError = 500,
     NotImplemented = 501,
     HTTPVersionNotSupported = 505,
-
-    // TODO: remove later as this is not an actual HTTP response code,
-    //      just used for internal purposes
-    Undefined = 1000,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

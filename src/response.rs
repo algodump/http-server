@@ -36,25 +36,20 @@ pub struct HttpResponse {
 
 pub struct HttpResponseBuilder(HttpResponse);
 impl HttpResponseBuilder {
-    pub fn new(http_status_code: ResponseCode, version: &str) -> Self {
+    pub fn new(status_code: ResponseCode, version: &str) -> Self {
         Self(HttpResponse {
-            status_code: http_status_code,
+            status_code,
             version: String::from(version),
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
         })
     }
 
-    pub fn default() -> Self {
+    pub fn default(status_code: ResponseCode) -> Self {
         Self(HttpResponse {
-            status_code: ResponseCode::Error(ErrorCode::Undefined),
+            status_code,
             version: String::from(DEFAULT_HTTP_VERSION),
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
         })
-    }
-
-    pub fn status_code(mut self, status_code: ResponseCode) -> Self {
-        self.0.status_code = status_code;
-        self
     }
 
     pub fn header(
@@ -75,10 +70,6 @@ impl HttpResponseBuilder {
     }
 
     pub fn build(self) -> HttpResponse {
-        debug_assert_ne!(
-            self.0.status_code,
-            ResponseCode::Error(ErrorCode::Undefined)
-        );
         self.0
     }
 }
@@ -110,19 +101,17 @@ impl HttpResponse {
 pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResponse {
     if let Some(http_error) = mb_http_error.downcast_ref::<InternalHttpError>() {
         match http_error {
-            InternalHttpError::KnownError(http_error_code) => HttpResponseBuilder::default()
-                .status_code(ResponseCode::Error(*http_error_code))
-                .build(),
+            InternalHttpError::KnownError(http_error_code) => {
+                HttpResponseBuilder::default(ResponseCode::Error(*http_error_code)).build()
+            }
             _ => {
-                return HttpResponseBuilder::default()
-                    .status_code(ResponseCode::Error(ErrorCode::BadRequest))
+                return HttpResponseBuilder::default(ResponseCode::Error(ErrorCode::BadRequest))
                     .build()
             }
         }
     } else {
         error!("System error: {:?}", mb_http_error);
-        return HttpResponseBuilder::default()
-            .status_code(ResponseCode::Error(ErrorCode::InternalServerError))
+        return HttpResponseBuilder::default(ResponseCode::Error(ErrorCode::InternalServerError))
             .build();
     }
 }
