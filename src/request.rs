@@ -125,8 +125,8 @@ fn parse_header(header: &String) -> Result<(String, String)> {
     ));
 }
 
-pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpRequest> {
-    let mut buf_reader = BufReader::new(&mut stream);
+pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
+    let mut buf_reader = BufReader::new(stream);
 
     // Parse request line
     let mut request_line = String::new();
@@ -205,7 +205,7 @@ pub fn parse_http_request(mut stream: &mut impl HttpStream) -> Result<HttpReques
 #[cfg(test)]
 mod tests {
     use rand::Rng;
-    use std::io::{Cursor, Write};
+    use std::io::{Cursor, Seek, Write};
 
     use super::*;
 
@@ -231,6 +231,7 @@ mod tests {
         for request in invalid_requests {
             let stream_res = stream.write(request.as_bytes());
             assert!(stream_res.is_ok());
+            stream.rewind().expect("failed to rewind");
             let result = parse_http_request(&mut stream);
             assert!(result.is_err());
         }
