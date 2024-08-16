@@ -211,6 +211,8 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
 pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
     let (tx, rx) = mpsc::channel();
     let mut stream_for_parser = stream.clone_stream();
+    // TODO: this is not a correct implementation as the spawn thread will continue to run even after
+    //       the timeout
     thread::spawn(move || {
         _ = tx.send(parse_http_request_internal(&mut stream_for_parser));
     });
@@ -224,46 +226,33 @@ pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use rand::Rng;
-    use std::io::{Cursor, Seek, Write};
+    use std::io::Cursor;
 
     use super::*;
 
-    #[test]
-    fn request_parse_invalid() {
-        let invalid_requests = [
-            // invalid request line
-            String::from(""),
-            String::from("GET HTTP/1.1"),
-            String::from("INVALID / HTTP/1.1"),
-            // invalid header format
-            String::from("GET / HTTP/1.1\r\nContent-Type:\r\n text/plain\r\n\r\n"),
-            // invalid content type
-            String::from("GET / HTTP/1.1\r\nContent-Length: -32\r\n\r\n"),
-            format!(
-                "GET / HTTP/1.1\r\nContent-Length: {} \r\n\r\n",
-                MAX_REQUEST_BODY_SIZE + 1
-            ),
-        ];
-
-        // TODO: match on error type if possible
-        let mut stream = Cursor::new(Vec::new());
-        for request in invalid_requests {
-            let stream_res = stream.write(request.as_bytes());
-            assert!(stream_res.is_ok());
-            stream.rewind().expect("failed to rewind");
-            let result = parse_http_request(&mut stream);
-            assert!(result.is_err());
+    // UTILS
+    fn get_error(res: Result<HttpRequest>) -> InternalHttpError {
+        let error = res.unwrap_err();
+        match error.downcast::<InternalHttpError>() {
+            Ok(http_error) => return http_error,
+            _ => panic!("Not an InternalHttpError"),
         }
     }
 
+    fn parse_request(request: &str) -> Result<HttpRequest> {
+        let mut stream = Cursor::new(request.as_bytes().to_vec());
+        return parse_http_request(&mut stream);
+    }
+
+    // SUCCESS
     #[test]
     fn request_parse_get() {
         let request =
-            b"GET /index.html HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nHello";
-        let mut stream = Cursor::new(request.to_vec());
-        let result = parse_http_request(&mut stream);
+            "GET /index.html HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nHello";
+
+        let result = parse_request(request);
         assert!(result.is_ok());
 
         let parsed_request = result.unwrap();
@@ -281,6 +270,53 @@ mod tests {
         assert_eq!(parsed_request.content.get_body(), b"Hello");
     }
 
+    // ERRORS
+    #[test]
+    fn request_malformed_request_line() {
+        let invalid_requests = vec![
+            // invalid request line
+            String::from("\r\n"),
+            String::from("GET HTTP/1.1\r\n"),
+            String::from("/ HTTP/1.1\r\n"),
+            String::from("GET / \r\n"),
+        ];
+
+        for request in invalid_requests {
+            let result = parse_request(request.as_str());
+            assert!(result.is_err());
+            assert_eq!(
+                get_error(result),
+                InternalHttpError::MalformedRequestLine(request)
+            );
+        }
+    }
+
+    #[test]
+    fn request_wrong_header_format() {
+        let invalid_requests = vec![
+            // invalid request line
+            String::from("GET / HTTP/1.1\r\nHeader:"),
+            String::from("GET / HTTP/1.1\r\n:"),
+        ];
+
+        for request in invalid_requests {
+            let result = parse_request(request.as_str());
+            assert!(result.is_err());
+            assert_eq!(get_error(result), InternalHttpError::WrongHeaderFormat);
+        }
+    }
+
+    #[test]
+    fn invalid_utf_char() {
+        let broken_heart: Vec<u8> = vec![240, 159, 146, 69];
+        let invalid_utf_string = unsafe { String::from_utf8_unchecked(broken_heart) };
+
+        let request = format!("GET / HTTP/1.1\r\nLove:{}", invalid_utf_string);
+        let res = parse_request(request.as_str());
+        assert!(res.is_err());
+        assert_eq!(get_error(res), InternalHttpError::InvalidUTF8Char);
+    }
+
     #[test]
     fn request_parse_max_allowed_headers() {
         let mut request = String::from("GET / HTTP/1.1\r\n");
@@ -290,20 +326,13 @@ mod tests {
             let header = format!("{}:{}\r\n", header_name, header_value);
             request.push_str(&header);
         }
+        request.push_str("break:http\r\n\r\n");
 
         let mut stream = Cursor::new(request.as_bytes().to_vec());
         let result = parse_http_request(&mut stream);
-        assert!(result.is_ok());
 
-        // Add one extra header that should lead to error
-        request.push_str("break:http\r\n");
-        stream.flush().expect("Failed to flush stream");
-        stream
-            .write_all(request.as_bytes())
-            .expect("Failed to write to stream");
-
-        let result = parse_http_request(&mut stream);
         assert!(result.is_err());
+        assert_eq!(get_error(result), InternalHttpError::HeaderOverflow);
     }
 
     static CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\

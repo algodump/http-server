@@ -45,7 +45,7 @@ impl ResponseCode {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum InternalHttpError {
     #[error("{}", 0.to_string())]
     KnownError(ErrorCode),

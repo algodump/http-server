@@ -260,7 +260,6 @@ mod tests {
     fn generate_error_response_for(invalid_request: &str) -> HttpResponse {
         let mut stream = Cursor::new(invalid_request.as_bytes().to_vec());
         let http_error = parse_http_request(&mut stream).unwrap_err();
-        println!("{:?}", http_error);
         return build_http_response_for_invalid_request(http_error);
     }
 
