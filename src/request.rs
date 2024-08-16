@@ -2,11 +2,13 @@ use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Read},
     str::FromStr,
+    sync::mpsc,
+    thread,
 };
 
 use crate::common::{
     ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, MAX_HEADERS_AMOUNT,
-    MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH,
+    MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH, REQUEST_TIMEOUT,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -100,15 +102,16 @@ fn get_http_version(version_line: &str) -> Result<String> {
     let version = ["1.1"]
         .iter()
         .find(|&&version| version_line.ends_with(version))
-        .ok_or_else(|| {
-            InternalHttpError::KnownError(ErrorCode::HTTPVersionNotSupported)})?;
-    
+        .ok_or_else(|| InternalHttpError::KnownError(ErrorCode::HTTPVersionNotSupported))?;
+
     return Ok(version.to_string());
 }
 
 fn parse_header(header: &String) -> Result<(String, String)> {
     if header.len() as u64 > MAX_HEADER_SIZE {
-        return Err(anyhow!(InternalHttpError::KnownError(ErrorCode::RequestHeaderFieldsTooLarge)));
+        return Err(anyhow!(InternalHttpError::KnownError(
+            ErrorCode::RequestHeaderFieldsTooLarge
+        )));
     }
 
     let Some(header_parsed) = header.split_once(':') else {
@@ -125,7 +128,7 @@ fn parse_header(header: &String) -> Result<(String, String)> {
     ));
 }
 
-pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
+pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpRequest> {
     let mut buf_reader = BufReader::new(stream);
 
     // Parse request line
@@ -146,7 +149,9 @@ pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
     };
 
     if resource.len() > MAX_URI_LENGTH {
-        return Err(anyhow!(InternalHttpError::KnownError(ErrorCode::URITooLong)));
+        return Err(anyhow!(InternalHttpError::KnownError(
+            ErrorCode::URITooLong
+        )));
     }
 
     let method = HttpRequestMethod::from_str(method)
@@ -157,7 +162,6 @@ pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
     let mut headers: HashMap<String, String> = HashMap::new();
     loop {
         let mut line = String::new();
-        // TODO: Infinite loop possible if EOF is never provide
         buf_reader
             .read_line(&mut line)
             .context(InternalHttpError::InvalidUTF8Char)?;
@@ -185,7 +189,9 @@ pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
 
     // Allow max body length up to 2 GB
     if content_length > MAX_REQUEST_BODY_SIZE {
-        return Err(anyhow!(InternalHttpError::KnownError(ErrorCode::ContentTooLarge)));
+        return Err(anyhow!(InternalHttpError::KnownError(
+            ErrorCode::ContentTooLarge
+        )));
     }
 
     let mut body = Vec::new();
@@ -200,6 +206,21 @@ pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
         request_line: HttpRequestLine::new(method, resource.to_string(), version),
         content: HttpMessageContent::new(headers, body),
     });
+}
+
+pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
+    let (tx, rx) = mpsc::channel();
+    let mut stream_for_parser = stream.clone_stream();
+    thread::spawn(move || {
+        _ = tx.send(parse_http_request_internal(&mut stream_for_parser));
+    });
+
+    let Ok(parsed_http_request) = rx.recv_timeout(REQUEST_TIMEOUT) else {
+        return Err(anyhow!(InternalHttpError::KnownError(
+            ErrorCode::RequestTimeout
+        )));
+    };
+    return parsed_http_request;
 }
 
 #[cfg(test)]
@@ -217,7 +238,7 @@ mod tests {
             String::from("GET HTTP/1.1"),
             String::from("INVALID / HTTP/1.1"),
             // invalid header format
-            String::from("GET / HTTP/1.1\r\nContent-Type :: text/plain\r\n\r\n"),
+            String::from("GET / HTTP/1.1\r\nContent-Type:\r\n text/plain\r\n\r\n"),
             // invalid content type
             String::from("GET / HTTP/1.1\r\nContent-Length: -32\r\n\r\n"),
             format!(

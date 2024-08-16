@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    io::{Read, Write},
+    io::{Cursor, Read, Write}, net::TcpStream, time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -19,6 +19,7 @@ pub enum ErrorCode {
     // Client Errors
     BadRequest = 400,
     NotFound = 404,
+    RequestTimeout = 408,
     ContentTooLarge = 413,
     URITooLong = 414,
     UnsupportedMediaType = 415,
@@ -63,9 +64,23 @@ pub const MAX_REQUEST_BODY_SIZE: u64 = u64::MAX / 2; // 2 GB
 pub const MAX_HEADER_SIZE: u64 = (u16::MAX / 2) as u64; // 8 KB
 pub const DEFAULT_HTTP_VERSION: &str = "1.1";
 pub const MAX_URI_LENGTH: usize = u16::MAX as usize;
+pub const REQUEST_TIMEOUT: Duration = Duration::new(60, 0);
 
-pub trait HttpStream: Read + Write {}
-impl<T: Read + Write> HttpStream for T {}
+pub trait HttpStream: Read + Write + Send + 'static{
+    fn clone_stream(&self) -> Self;
+}
+
+impl HttpStream for TcpStream {
+    fn clone_stream(&self) -> Self {
+        self.try_clone().expect("Failed to clone stream")
+    }
+}
+
+impl HttpStream for Cursor<Vec<u8>> {
+    fn clone_stream(&self) -> Self {
+        self.clone()
+    }
+}
 
 #[derive(Debug)]
 pub struct HttpMessageContent {
