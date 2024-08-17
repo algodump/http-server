@@ -1,6 +1,7 @@
 pub mod common;
 pub mod request;
 pub mod response;
+pub mod compressor;
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},

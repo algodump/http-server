@@ -4,6 +4,8 @@ use crate::common::{
     ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, ResponseCode, SuccessCode,
     DEFAULT_HTTP_VERSION,
 };
+
+use crate::compressor::{CompressionMethod, Compressor};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
 use anyhow::{Error, Result};
@@ -32,6 +34,7 @@ pub struct HttpResponse {
     status_code: ResponseCode,
     version: String,
     content: HttpMessageContent,
+    compression: Option<CompressionMethod>,
 }
 
 pub struct HttpResponseBuilder(HttpResponse);
@@ -41,6 +44,7 @@ impl HttpResponseBuilder {
             status_code,
             version: String::from(version),
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
+            compression: None,
         })
     }
 
@@ -49,6 +53,7 @@ impl HttpResponseBuilder {
             status_code,
             version: String::from(DEFAULT_HTTP_VERSION),
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
+            compression: None,
         })
     }
 
@@ -89,7 +94,15 @@ impl HttpResponse {
         response.push_str("\r\n");
 
         stream.write_all(response.as_bytes())?;
-        stream.write_all(&self.content.get_body())?;
+
+        if let Some(compression_method) = self.compression {
+            stream.write_all(&Compressor::compress(
+                self.content.get_body(),
+                compression_method,
+            ))?;
+        } else {
+            stream.write_all(&self.content.get_body())?;
+        }
         Ok(())
     }
 

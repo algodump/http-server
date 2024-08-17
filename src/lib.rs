@@ -1,6 +1,7 @@
 mod common;
 mod request;
 mod response;
+mod compressor;
 
 use common::HttpStream;
 use request::parse_http_request;
