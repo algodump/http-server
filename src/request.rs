@@ -6,13 +6,16 @@ use std::{
     thread,
 };
 
-use crate::common::{
-    ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, MAX_HEADERS_AMOUNT,
-    MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH, REQUEST_TIMEOUT,
+use crate::{
+    common::{
+        ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, MAX_HEADERS_AMOUNT,
+        MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH, REQUEST_TIMEOUT,
+    },
+    compressor::ContentEncoding,
 };
 
 use anyhow::{anyhow, Context, Result};
-use log::trace;
+use log::{info, trace};
 
 #[derive(Debug, enum_utils::FromStr, Clone, Copy, PartialEq)]
 pub enum HttpRequestMethod {
@@ -47,6 +50,7 @@ impl HttpRequestLine {
 pub struct HttpRequest {
     request_line: HttpRequestLine,
     content: HttpMessageContent,
+    requested_encoding: Option<ContentEncoding>,
 }
 
 impl HttpRequest {
@@ -62,6 +66,10 @@ impl HttpRequest {
         return self.request_line.version.clone();
     }
 
+    pub fn get_encoding(&self) -> Option<ContentEncoding> {
+        return self.requested_encoding;
+    }
+
     pub fn content(&self) -> &HttpMessageContent {
         &self.content
     }
@@ -73,6 +81,7 @@ impl HttpRequestBuilder {
         Self(HttpRequest {
             request_line,
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
+            requested_encoding: None,
         })
     }
 
@@ -126,6 +135,44 @@ fn parse_header(header: &String) -> Result<(String, String)> {
         header_parsed.0.trim().to_ascii_lowercase(),
         header_parsed.1.trim().to_string(),
     ));
+}
+
+// Parse string: "br;q=1.0, gzip;q=0.8, *;q=0.1"
+fn parse_encodings(accepted_encodings: &str) -> Result<Vec<ContentEncoding>> {
+    let mut encodings_by_priority: Vec<(ContentEncoding, f32)> = Vec::new();
+    for encoding in accepted_encodings.split(',') {
+        let (name, priority) = if let Some((name, priority)) = encoding.split_once(";q=") {
+            (name, priority)
+        } else {
+            (encoding, "1.0")
+        };
+        let priority = priority
+            .parse::<f32>()
+            .context(format!("Failed to parse {:?}", priority))?;
+        let content_encoding = ContentEncoding::from_str(name.trim())
+            .context(format!("Unknown content encoding {:?}", name))?;
+
+        encodings_by_priority.push((content_encoding, priority));
+    }
+
+    encodings_by_priority.sort_by(|lhs, rhs| lhs.1.partial_cmp(&rhs.1).unwrap());
+    let res = encodings_by_priority
+        .into_iter()
+        .map(|(content_encoding, _)| content_encoding)
+        .collect();
+    return Ok(res);
+}
+
+fn choose_content_encoding(content_encodings: &Vec<ContentEncoding>) -> Result<ContentEncoding> {
+    let Some(supported_encoding) = content_encodings
+        .into_iter()
+        .find(|encoding| encoding.is_supported())
+    else {
+        return Err(anyhow!(InternalHttpError::KnownError(
+            ErrorCode::NotAcceptable
+        )));
+    };
+    return Ok(supported_encoding.clone());
 }
 
 pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpRequest> {
@@ -202,9 +249,19 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
             .context("Failed to read body of Http request")?;
     }
 
+    let requested_encoding = if let Some(encodings) = headers.get("accept-encoding") {
+        let proposed_encodings = parse_encodings(&encodings)?;
+        let encoding = choose_content_encoding(&proposed_encodings)?;
+        Some(encoding)
+    } else {
+        info!("accept-encoding, wasn't provided by the client, sending data as is");
+        None
+    };
+
     return Ok(HttpRequest {
         request_line: HttpRequestLine::new(method, resource.to_string(), version),
         content: HttpMessageContent::new(headers, body),
+        requested_encoding,
     });
 }
 

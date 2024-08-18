@@ -19,6 +19,7 @@ pub enum ErrorCode {
     // Client Errors
     BadRequest = 400,
     NotFound = 404,
+    NotAcceptable = 406,
     RequestTimeout = 408,
     ContentTooLarge = 413,
     URITooLong = 414,
@@ -57,6 +58,7 @@ pub enum InternalHttpError {
     HeaderOverflow,
     #[error("Encountered invalid UTF8 while parsing HTTP request")]
     InvalidUTF8Char,
+
 }
 
 pub const MAX_HEADERS_AMOUNT: usize = 10_000;

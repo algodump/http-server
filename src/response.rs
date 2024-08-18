@@ -5,7 +5,7 @@ use crate::common::{
     DEFAULT_HTTP_VERSION,
 };
 
-use crate::compressor::{CompressionMethod, Compressor};
+use crate::compressor::{Compressor, ContentEncoding};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
 use anyhow::{Error, Result};
@@ -34,18 +34,24 @@ pub struct HttpResponse {
     status_code: ResponseCode,
     version: String,
     content: HttpMessageContent,
-    compression: Option<CompressionMethod>,
+    encoding: Option<ContentEncoding>,
 }
 
 pub struct HttpResponseBuilder(HttpResponse);
 impl HttpResponseBuilder {
-    pub fn new(status_code: ResponseCode, version: &str) -> Self {
-        Self(HttpResponse {
+    pub fn new(status_code: ResponseCode, version: &str, encoding: Option<ContentEncoding>) -> Self {
+        let builder = Self(HttpResponse {
             status_code,
             version: String::from(version),
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
-            compression: None,
-        })
+            encoding,
+        });
+
+        if let Some(encoding) = encoding {
+            builder.header("content-encoding", encoding.to_string())
+        } else {
+            builder
+        }
     }
 
     pub fn default(status_code: ResponseCode) -> Self {
@@ -53,7 +59,7 @@ impl HttpResponseBuilder {
             status_code,
             version: String::from(DEFAULT_HTTP_VERSION),
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
-            compression: None,
+            encoding: None,
         })
     }
 
@@ -95,7 +101,7 @@ impl HttpResponse {
 
         stream.write_all(response.as_bytes())?;
 
-        if let Some(compression_method) = self.compression {
+        if let Some(compression_method) = self.encoding {
             stream.write_all(&Compressor::compress(
                 self.content.get_body(),
                 compression_method,
@@ -110,6 +116,7 @@ impl HttpResponse {
         &self.content
     }
 }
+
 
 pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResponse {
     if let Some(http_error) = mb_http_error.downcast_ref::<InternalHttpError>() {
@@ -132,7 +139,7 @@ pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResp
 pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
     let resource = http_request.get_resource();
     let version = http_request.get_version();
-
+    let encoding = http_request.get_encoding();
     trace!(
         "Method: {:?}, Resource: {}",
         http_request.get_method(),
@@ -140,12 +147,13 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
     );
 
     let ok_response_builder =
-        HttpResponseBuilder::new(ResponseCode::Success(SuccessCode::OK), &version);
+        HttpResponseBuilder::new(ResponseCode::Success(SuccessCode::OK), &version, encoding);
     let not_found_response_builder =
-        HttpResponseBuilder::new(ResponseCode::Error(ErrorCode::NotFound), &version);
+        HttpResponseBuilder::new(ResponseCode::Error(ErrorCode::NotFound), &version, encoding);
     let internal_server_error_response_builder = HttpResponseBuilder::new(
         ResponseCode::Error(ErrorCode::InternalServerError),
         &version,
+        encoding
     );
 
     match http_request.get_method() {
@@ -197,6 +205,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                         return HttpResponseBuilder::new(
                             ResponseCode::Error(ErrorCode::UnsupportedMediaType),
                             &version,
+                            encoding
                         )
                         .build();
                     };
@@ -236,6 +245,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                 return HttpResponseBuilder::new(
                     ResponseCode::Success(SuccessCode::Created),
                     &version,
+                    encoding
                 )
                 .build();
             }
@@ -245,6 +255,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
             return HttpResponseBuilder::new(
                 ResponseCode::Error(ErrorCode::NotImplemented),
                 &version,
+                encoding,
             )
             .build()
         }
