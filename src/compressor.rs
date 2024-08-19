@@ -30,7 +30,10 @@ impl ContentEncoding {
 
 impl ToString for ContentEncoding {
     fn to_string(&self) -> String {
-        return format!("{:?}", self).to_lowercase();
+        match self {
+            ContentEncoding::Pack200gzip => return "pack200-gzip".to_string(),
+            _ => return format!("{:?}", self).to_lowercase(),
+        }
     }
 }
 
@@ -59,19 +62,19 @@ impl FromStr for ContentEncoding {
 pub struct Compressor {}
 impl Compressor {
     pub fn compress(data: &[u8], content_encoding: ContentEncoding) -> Vec<u8> {
+        fn compress_internal<T: Read>(mut compressor: T) -> Vec<u8> {
+            let mut ret_vec = Vec::new();
+            compressor
+                .read_to_end(&mut ret_vec)
+                .expect("Failed to compress");
+            ret_vec
+        }
         match content_encoding {
             ContentEncoding::Gzip => {
-                // TODO: move to some internal functions
-                let mut ret_vec = Vec::new();
-                let mut gz = GzEncoder::new(data, Compression::fast());
-                gz.read_to_end(&mut ret_vec).expect("Failed to compress");
-                ret_vec
+                return compress_internal(GzEncoder::new(data, Compression::fast()));
             }
             ContentEncoding::Deflate => {
-                let mut ret_vec = Vec::new();
-                let mut df = DeflateEncoder::new(data, Compression::fast());
-                df.read_to_end(&mut ret_vec).expect("Failed to compress");
-                ret_vec
+                return compress_internal(DeflateEncoder::new(data, Compression::fast()));
             }
             ContentEncoding::Identity => {
                 return Vec::from(data);

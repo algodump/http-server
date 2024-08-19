@@ -327,6 +327,20 @@ mod test {
         assert_eq!(parsed_request.content.get_body(), b"Hello");
     }
 
+    #[test]
+    fn request_parse_accept_encoding() {
+        let request = "GET / HTTP/1.1\r\nAccept-Encoding : br;q=0.8, gzip, *\r\n\r\n";
+        let result = parse_request(request);
+        assert!(result.is_ok());
+
+        let parsed_request = result.unwrap();
+        assert!(parsed_request.get_encoding().is_some());
+        assert_eq!(
+            parsed_request.get_encoding().unwrap(),
+            ContentEncoding::Gzip
+        );
+    }
+
     // ERRORS
     #[test]
     fn request_malformed_request_line() {

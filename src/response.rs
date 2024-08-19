@@ -39,7 +39,11 @@ pub struct HttpResponse {
 
 pub struct HttpResponseBuilder(HttpResponse);
 impl HttpResponseBuilder {
-    pub fn new(status_code: ResponseCode, version: &str, encoding: Option<ContentEncoding>) -> Self {
+    pub fn new(
+        status_code: ResponseCode,
+        version: &str,
+        encoding: Option<ContentEncoding>,
+    ) -> Self {
         let builder = Self(HttpResponse {
             status_code,
             version: String::from(version),
@@ -117,7 +121,6 @@ impl HttpResponse {
     }
 }
 
-
 pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResponse {
     if let Some(http_error) = mb_http_error.downcast_ref::<InternalHttpError>() {
         match http_error {
@@ -153,7 +156,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
     let internal_server_error_response_builder = HttpResponseBuilder::new(
         ResponseCode::Error(ErrorCode::InternalServerError),
         &version,
-        encoding
+        encoding,
     );
 
     match http_request.get_method() {
@@ -205,7 +208,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                         return HttpResponseBuilder::new(
                             ResponseCode::Error(ErrorCode::UnsupportedMediaType),
                             &version,
-                            encoding
+                            encoding,
                         )
                         .build();
                     };
@@ -245,7 +248,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                 return HttpResponseBuilder::new(
                     ResponseCode::Success(SuccessCode::Created),
                     &version,
-                    encoding
+                    encoding,
                 )
                 .build();
             }
@@ -265,8 +268,8 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_http_response, build_http_response_for_invalid_request, ErrorCode, HttpResponse,
-        ResponseCode, SuccessCode,
+        build_http_response, build_http_response_for_invalid_request, ContentEncoding, ErrorCode,
+        HttpResponse, ResponseCode, SuccessCode,
     };
 
     use std::{
@@ -279,7 +282,6 @@ mod tests {
     use crate::request::{
         parse_http_request, HttpRequestBuilder, HttpRequestLine, HttpRequestMethod,
     };
-
     // UTILS
     fn generate_error_response_for(invalid_request: &str) -> HttpResponse {
         let mut stream = Cursor::new(invalid_request.as_bytes().to_vec());
@@ -427,6 +429,21 @@ mod tests {
         assert_eq!(
             error_response.status_code,
             ResponseCode::Error(ErrorCode::ContentTooLarge)
+        );
+    }
+
+    #[test]
+    fn response_with_invalid_request_not_accepted() {
+        let not_supported_encoding = ContentEncoding::Pack200gzip.to_string();
+        let invalid_request = format!(
+            "GET /echo/test HTTP/1.1\r\nAccept-Encoding : {}",
+            not_supported_encoding
+        );
+        let error_response = generate_error_response_for(&invalid_request);
+
+        assert_eq!(
+            error_response.status_code,
+            ResponseCode::Error(ErrorCode::NotAcceptable)
         );
     }
 
