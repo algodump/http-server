@@ -1,6 +1,8 @@
 use std::{
     collections::HashMap,
-    io::{Cursor, Read, Write}, net::TcpStream, time::Duration,
+    io::{Cursor, Read, Write},
+    net::TcpStream,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -18,6 +20,7 @@ pub enum SuccessCode {
 pub enum ErrorCode {
     // Client Errors
     BadRequest = 400,
+    Unauthorized = 401,
     NotFound = 404,
     NotAcceptable = 406,
     RequestTimeout = 408,
@@ -58,7 +61,6 @@ pub enum InternalHttpError {
     HeaderOverflow,
     #[error("Encountered invalid UTF8 while parsing HTTP request")]
     InvalidUTF8Char,
-
 }
 
 pub const MAX_HEADERS_AMOUNT: usize = 10_000;
@@ -68,7 +70,7 @@ pub const DEFAULT_HTTP_VERSION: &str = "1.1";
 pub const MAX_URI_LENGTH: usize = u16::MAX as usize;
 pub const REQUEST_TIMEOUT: Duration = Duration::new(60, 0);
 
-pub trait HttpStream: Read + Write + Send + 'static{
+pub trait HttpStream: Read + Write + Send + 'static {
     fn clone_stream(&self) -> Self;
 }
 

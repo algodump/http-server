@@ -1,13 +1,13 @@
+mod auth;
 mod common;
+mod compressor;
 mod request;
 mod response;
-mod compressor;
 
+use anyhow::{Context, Result};
 use common::HttpStream;
 use request::parse_http_request;
 use response::{build_http_response, build_http_response_for_invalid_request};
-
-use anyhow::{Context, Result};
 
 pub fn handel_connection(stream: &mut impl HttpStream) -> Result<()> {
     let http_request = parse_http_request(stream);

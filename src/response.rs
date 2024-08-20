@@ -5,6 +5,7 @@ use crate::common::{
     DEFAULT_HTTP_VERSION,
 };
 
+use crate::auth::{AuthType, Authenticator};
 use crate::compressor::{Compressor, ContentEncoding};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
@@ -144,9 +145,10 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
     let version = http_request.get_version();
     let encoding = http_request.get_encoding();
     trace!(
-        "Method: {:?}, Resource: {}",
+        "Method: {:?}, Resource: {}, Headers: {:?}",
         http_request.get_method(),
-        resource
+        resource,
+        http_request.content().get_headers()
     );
 
     let ok_response_builder =
@@ -176,6 +178,28 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                     };
 
                 return user_agent_response;
+            }
+            "/auth" => {
+                let authorization_string = http_request.content().get_header("authorization");
+
+                if let Some(authorization_string) = authorization_string {
+                    if let Some(basic_credential) = authorization_string.strip_prefix("Basic ") {
+                        if Authenticator::authenticate(basic_credential.as_bytes(), AuthType::Basic)
+                        {
+                            return ok_response_builder.build();
+                        }
+                    }
+                }
+                // TODO: don't set encoding and version on every builder
+                let auth_response = HttpResponseBuilder::new(
+                    ResponseCode::Error(ErrorCode::Unauthorized),
+                    &version,
+                    encoding,
+                )
+                .header("WWW-Authenticate", AuthType::Basic.to_string())
+                .build();
+
+                return auth_response;
             }
             _ => {
                 if let Some(echo) = resource.strip_prefix("/echo/") {
