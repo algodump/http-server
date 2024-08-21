@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::{collections::HashMap, fs, io::Write};
 
 use crate::common::{
@@ -5,12 +6,12 @@ use crate::common::{
     DEFAULT_HTTP_VERSION,
 };
 
-use crate::auth::{AuthType, Authenticator};
+use crate::auth::{AuthMethod, Authenticator};
 use crate::compressor::{Compressor, ContentEncoding};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
-use anyhow::{Error, Result};
-use log::{error, trace};
+use anyhow::{anyhow, Error, Result};
+use log::{error, info, trace};
 
 impl ToString for ResponseCode {
     fn to_string(&self) -> String {
@@ -106,10 +107,10 @@ impl HttpResponse {
 
         stream.write_all(response.as_bytes())?;
 
-        if let Some(compression_method) = self.encoding {
+        if let Some(content_encoding) = self.encoding {
             stream.write_all(&Compressor::compress(
                 self.content.get_body(),
-                compression_method,
+                content_encoding,
             ))?;
         } else {
             stream.write_all(&self.content.get_body())?;
@@ -138,6 +139,15 @@ pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResp
         return HttpResponseBuilder::default(ResponseCode::Error(ErrorCode::InternalServerError))
             .build();
     }
+}
+
+// TODO: probably this should be done during the request parsing phase
+fn get_auth_information(authorization_string: &str) -> Result<(AuthMethod, &[u8])> {
+    let (auth_method, auth_data) = authorization_string
+        .split_once(' ')
+        .ok_or_else(|| anyhow!("Wrong authorization string "))?;
+    let auth_method = AuthMethod::from_str(auth_method)?;
+    return Ok((auth_method, auth_data.as_bytes()));
 }
 
 pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
@@ -179,38 +189,29 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
 
                 return user_agent_response;
             }
-            "/auth" => {
-                let authorization_string = http_request.content().get_header("authorization");
+            _ => {
+                if let Some(file_path) = resource.strip_prefix("/files/") {
+                    if let Some(auth_string) = http_request.content().get_header("authorization") {
+                        let auth_information = get_auth_information(auth_string);
+                        let Ok((auth_method, auth_data)) = auth_information else {
+                            return build_http_response_for_invalid_request(
+                                auth_information.unwrap_err(),
+                            );
+                        };
 
-                if let Some(authorization_string) = authorization_string {
-                    if let Some(basic_credential) = authorization_string.strip_prefix("Basic ") {
-                        if Authenticator::authenticate(basic_credential.as_bytes(), AuthType::Basic)
-                        {
-                            return ok_response_builder.build();
+                        let authenticated = Authenticator::authenticate(auth_data, &auth_method);
+                        if !authenticated {
+                            return HttpResponseBuilder::new(
+                                ResponseCode::Error(ErrorCode::Unauthorized),
+                                &version,
+                                encoding,
+                            )
+                            .header("WWW-Authenticate", auth_method.to_string())
+                            .build();
                         }
                     }
-                }
-                // TODO: don't set encoding and version on every builder
-                let auth_response = HttpResponseBuilder::new(
-                    ResponseCode::Error(ErrorCode::Unauthorized),
-                    &version,
-                    encoding,
-                )
-                .header("WWW-Authenticate", AuthType::Basic.to_string())
-                .build();
 
-                return auth_response;
-            }
-            _ => {
-                if let Some(echo) = resource.strip_prefix("/echo/") {
-                    let echo_response = ok_response_builder
-                        .header("content-type", "text/plain")
-                        .body(echo.as_bytes())
-                        .build();
-
-                    return echo_response;
-                } else if let Some(file_path) = resource.strip_prefix("/files/") {
-                    // FIXME: handel file versions properly, for now it will be just discarded
+                    // FIXME: handel file versions properly, for now  it will be just discarded
                     // EXAMPLE: fontawesome-webfont.woff?v=4.7.0
                     let path_end = file_path.find("?v=").unwrap_or(file_path.len());
                     let processed_file_path = &file_path[..path_end];
@@ -242,6 +243,13 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                         .header("content-type", content_type)
                         .body(&file_content)
                         .build();
+                } else if let Some(echo) = resource.strip_prefix("/echo/") {
+                    let echo_response = ok_response_builder
+                        .header("content-type", "text/plain")
+                        .body(echo.as_bytes())
+                        .build();
+
+                    return echo_response;
                 }
                 error!("GET: Unhandled response message: resource - {:?}", resource);
                 return internal_server_error_response_builder.build();
@@ -302,10 +310,12 @@ mod tests {
         io::{Cursor, Read},
     };
 
-    use crate::common::{MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH};
+    use crate::{auth::Authenticator, common::{MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH}};
     use crate::request::{
         parse_http_request, HttpRequestBuilder, HttpRequestLine, HttpRequestMethod,
     };
+    use base64::prelude::*;
+
     // UTILS
     fn generate_error_response_for(invalid_request: &str) -> HttpResponse {
         let mut stream = Cursor::new(invalid_request.as_bytes().to_vec());
@@ -396,6 +406,32 @@ mod tests {
         assert_eq!(
             response.status_code,
             ResponseCode::Error(ErrorCode::NotFound)
+        );
+    }
+
+    #[test]
+    fn response_unauthorized_request() {
+        let request = request_get_builder("/files/test")
+            .header("authorization", "Basic djkfdskjf")
+            .build();
+        let response = build_http_response(&request);
+
+        assert_eq!(
+            response.status_code,
+            ResponseCode::Error(ErrorCode::Unauthorized)
+        );
+    }
+
+    #[test]
+    fn response_authorized_request() {
+        let request = request_get_builder("/files/test")
+            .header("authorization", format!("Basic {}", Authenticator::default_credentials()))
+            .build();
+        let response = build_http_response(&request);
+
+        assert_ne!(
+            response.status_code,
+            ResponseCode::Error(ErrorCode::Unauthorized)
         );
     }
 
