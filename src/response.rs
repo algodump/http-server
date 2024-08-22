@@ -11,7 +11,7 @@ use crate::compressor::{Compressor, ContentEncoding};
 use crate::request::{HttpRequest, HttpRequestMethod};
 
 use anyhow::{anyhow, Error, Result};
-use log::{error, info, trace};
+use log::{error, trace};
 
 impl ToString for ResponseCode {
     fn to_string(&self) -> String {
@@ -151,7 +151,7 @@ fn get_auth_information(authorization_string: &str) -> Result<(AuthMethod, &[u8]
 }
 
 pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
-    let resource = http_request.get_resource();
+    let resource = http_request.get_url().resource();
     let version = http_request.get_version();
     let encoding = http_request.get_encoding();
     trace!(
@@ -211,23 +211,18 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                         }
                     }
 
-                    // FIXME: handel file versions properly, for now  it will be just discarded
-                    // EXAMPLE: fontawesome-webfont.woff?v=4.7.0
-                    let path_end = file_path.find("?v=").unwrap_or(file_path.len());
-                    let processed_file_path = &file_path[..path_end];
-
-                    let mb_file_content = fs::read(processed_file_path);
+                    let mb_file_content = fs::read(file_path);
                     let Ok(file_content) = mb_file_content else {
                         error!(
                             "Can't read `{:?}` error = {:?}",
-                            processed_file_path,
+                            file_path,
                             mb_file_content.unwrap_err()
                         );
                         return not_found_response_builder.build();
                     };
 
                     let Ok(content_type) =
-                        http_request.content().get_content_type(processed_file_path)
+                        http_request.content().get_content_type(file_path)
                     else {
                         error!("Unsupported media type: {}", resource);
                         return HttpResponseBuilder::new(
@@ -310,11 +305,14 @@ mod tests {
         io::{Cursor, Read},
     };
 
-    use crate::{auth::Authenticator, common::{MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH}};
     use crate::request::{
         parse_http_request, HttpRequestBuilder, HttpRequestLine, HttpRequestMethod,
     };
-    use base64::prelude::*;
+    use crate::url::Url;
+    use crate::{
+        auth::Authenticator,
+        common::{MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH},
+    };
 
     // UTILS
     fn generate_error_response_for(invalid_request: &str) -> HttpResponse {
@@ -327,7 +325,7 @@ mod tests {
     fn request_get_builder(resource: &str) -> HttpRequestBuilder {
         HttpRequestBuilder::new(HttpRequestLine::new(
             HttpRequestMethod::GET,
-            String::from(resource),
+            Url::new(resource),
             String::from("HTTP/1.1"),
         ))
     }
@@ -335,7 +333,7 @@ mod tests {
     fn request_post_builder(resource: &str) -> HttpRequestBuilder {
         HttpRequestBuilder::new(HttpRequestLine::new(
             HttpRequestMethod::POST,
-            String::from(resource),
+            Url::new(resource),
             String::from("HTTP/1.1"),
         ))
     }
@@ -425,7 +423,10 @@ mod tests {
     #[test]
     fn response_authorized_request() {
         let request = request_get_builder("/files/test")
-            .header("authorization", format!("Basic {}", Authenticator::default_credentials()))
+            .header(
+                "authorization",
+                format!("Basic {}", Authenticator::default_credentials()),
+            )
             .build();
         let response = build_http_response(&request);
 

@@ -12,6 +12,7 @@ use crate::{
         MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH, REQUEST_TIMEOUT,
     },
     compressor::ContentEncoding,
+    url::Url,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -32,15 +33,15 @@ pub enum HttpRequestMethod {
 #[derive(Debug)]
 pub struct HttpRequestLine {
     method: HttpRequestMethod,
-    resource: String,
+    url: Url,
     version: String,
 }
 
 impl HttpRequestLine {
-    pub fn new(method: HttpRequestMethod, resource: String, version: String) -> Self {
+    pub fn new(method: HttpRequestMethod, url: Url, version: String) -> Self {
         Self {
             method,
-            resource,
+            url,
             version,
         }
     }
@@ -58,8 +59,8 @@ impl HttpRequest {
         return self.request_line.method;
     }
 
-    pub fn get_resource(&self) -> String {
-        return self.request_line.resource.clone();
+    pub fn get_url(&self) -> Url {
+        return self.request_line.url.clone();
     }
 
     pub fn get_version(&self) -> String {
@@ -204,6 +205,7 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
     let method = HttpRequestMethod::from_str(method)
         .map_err(|_| anyhow!(InternalHttpError::KnownError(ErrorCode::NotImplemented)))?;
     let version = get_http_version(version)?;
+    let url = Url::new(resource);
 
     // Parse headers
     let mut headers: HashMap<String, String> = HashMap::new();
@@ -259,7 +261,7 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
     };
 
     return Ok(HttpRequest {
-        request_line: HttpRequestLine::new(method, resource.to_string(), version),
+        request_line: HttpRequestLine::new(method, url, version),
         content: HttpMessageContent::new(headers, body),
         requested_encoding,
     });
@@ -314,7 +316,7 @@ mod test {
 
         let parsed_request = result.unwrap();
         assert_eq!(parsed_request.request_line.method, HttpRequestMethod::GET);
-        assert_eq!(parsed_request.request_line.resource, "/index.html");
+        assert_eq!(parsed_request.request_line.url.resource(), "/index.html");
         assert_eq!(parsed_request.request_line.version, "1.1");
         assert_eq!(
             parsed_request.content.get_header("host").unwrap(),

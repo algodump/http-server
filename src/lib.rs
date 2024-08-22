@@ -3,6 +3,7 @@ mod common;
 mod compressor;
 mod request;
 mod response;
+mod url;
 
 use anyhow::{Context, Result};
 use common::HttpStream;
