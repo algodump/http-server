@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     common::{
-        ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, MAX_HEADERS_AMOUNT,
+        ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, Range, MAX_HEADERS_AMOUNT,
         MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH, REQUEST_TIMEOUT,
     },
     compressor::ContentEncoding,
@@ -52,6 +52,7 @@ pub struct HttpRequest {
     request_line: HttpRequestLine,
     content: HttpMessageContent,
     requested_encoding: Option<ContentEncoding>,
+    range: Option<Range>,
 }
 
 impl HttpRequest {
@@ -83,6 +84,7 @@ impl HttpRequestBuilder {
             request_line,
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
             requested_encoding: None,
+            range: None,
         })
     }
 
@@ -176,6 +178,21 @@ fn choose_content_encoding(content_encodings: &Vec<ContentEncoding>) -> Result<C
     return Ok(supported_encoding.clone());
 }
 
+// "bytes=0-1023"
+fn parse_range(data: &str) -> Result<(u32, u32)> {
+    let range = data
+        .strip_prefix("bytes=")
+        .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange(data.to_string())))?;
+
+    let (from, to) = range
+        .split_once('-')
+        .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange(range.to_string())))?;
+
+    let from = from.parse::<u32>()?;
+    let to = to.parse::<u32>()?;
+    Ok((from, to))
+}
+
 pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpRequest> {
     let mut buf_reader = BufReader::new(stream);
 
@@ -260,10 +277,18 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
         None
     };
 
+    let range = if let Some(range) = headers.get("range") {
+        let (from, to) = parse_range(&range)?;
+        Some(Range { from, to })
+    } else {
+        None
+    };
+
     return Ok(HttpRequest {
         request_line: HttpRequestLine::new(method, url, version),
         content: HttpMessageContent::new(headers, body),
         requested_encoding,
+        range
     });
 }
 
