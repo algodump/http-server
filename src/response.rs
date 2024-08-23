@@ -340,15 +340,17 @@ mod tests {
         env::{current_dir, temp_dir},
         fs,
         io::{Cursor, Read},
+        path::PathBuf,
     };
 
-    use crate::request::{
-        parse_http_request, HttpRequestBuilder, HttpRequestLine, HttpRequestMethod,
-    };
     use crate::url::Url;
     use crate::{
         auth::Authenticator,
         common::{MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH},
+    };
+    use crate::{
+        common::Range,
+        request::{parse_http_request, HttpRequestBuilder, HttpRequestLine, HttpRequestMethod},
     };
 
     // UTILS
@@ -356,6 +358,13 @@ mod tests {
         let mut stream = Cursor::new(invalid_request.as_bytes().to_vec());
         let http_error = parse_http_request(&mut stream).unwrap_err();
         return build_http_response_for_invalid_request(http_error);
+    }
+
+    fn get_full_path(file_path: &str) -> PathBuf {
+        current_dir()
+            .expect("Failed to get current directory")
+            .as_path()
+            .join(file_path)
     }
 
     // BUILDERS
@@ -411,11 +420,7 @@ mod tests {
 
     #[test]
     fn response_get_file() {
-        let file_full_path = current_dir()
-            .expect("Failed to get current directory")
-            .as_path()
-            .join("src")
-            .join("main.rs");
+        let file_full_path = get_full_path("src/main.rs");
         let mut file = fs::File::open(&file_full_path).expect("Can't open test file");
         let mut file_content = Vec::new();
         file.read_to_end(&mut file_content)
@@ -431,6 +436,34 @@ mod tests {
             "text/x-rust"
         );
         assert!(response.content.get_body().starts_with(&file_content));
+    }
+
+    #[test]
+    fn response_get_partial_content() {
+        let file_full_path = get_full_path("src/main.rs");
+        let mut file = fs::File::open(&file_full_path).expect("Can't open test file");
+        let mut file_content = Vec::new();
+        file.read_to_end(&mut file_content)
+            .expect("Failed to read test file");
+
+        let range = Range::new(0, 64);
+        let request = request_get_builder(format!("/files/{}", file_full_path.display()).as_str())
+            .set_range(range.clone())
+            .build();
+        let response = build_http_response(&request);
+
+        assert_eq!(
+            response.status_code,
+            ResponseCode::Success(SuccessCode::PartialContent)
+        );
+        assert_eq!(
+            response.content.get_header("content-range").unwrap(),
+            format!("bytes {}-{}", range.from, range.to).as_str()
+        );
+        assert_eq!(
+            response.content.get_body().len(),
+            (range.to - range.from) as usize
+        );
     }
 
     #[test]

@@ -62,8 +62,8 @@ pub enum InternalHttpError {
     HeaderOverflow,
     #[error("Encountered invalid UTF8 while parsing HTTP request")]
     InvalidUTF8Char,
-    #[error("Invalid range provided: {0}")]
-    InvalidRange(String),
+    #[error("Invalid range provided")]
+    InvalidRange
 }
 
 pub const MAX_HEADERS_AMOUNT: usize = 10_000;

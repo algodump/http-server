@@ -92,6 +92,11 @@ impl HttpRequestBuilder {
         })
     }
 
+    pub fn set_range(mut self, range: Range) -> Self {
+        self.0.range = Some(range.clone());
+        self.header("Range", format!("{}-{}", range.from, range.to))
+    }
+
     pub fn header(
         mut self,
         header_name: impl Into<String>,
@@ -186,11 +191,11 @@ fn choose_content_encoding(content_encodings: &Vec<ContentEncoding>) -> Result<C
 fn parse_range(data: &str) -> Result<Range> {
     let range = data
         .strip_prefix("bytes=")
-        .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange(data.to_string())))?;
+        .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange))?;
 
     let (from, to) = range
         .split_once('-')
-        .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange(range.to_string())))?;
+        .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange))?;
 
     let from = from.parse()?;
     let to = to.parse()?;
@@ -280,7 +285,7 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
         info!("accept-encoding, wasn't provided by the client, sending data as is");
         None
     };
-    
+
     let range = if let Some(range) = headers.get("range") {
         let range = parse_range(&range)?;
         Some(range)
@@ -409,7 +414,7 @@ mod test {
     }
 
     #[test]
-    fn invalid_utf_char() {
+    fn request_invalid_utf_char() {
         let broken_heart: Vec<u8> = vec![240, 159, 146, 69];
         let invalid_utf_string = unsafe { String::from_utf8_unchecked(broken_heart) };
 
@@ -417,6 +422,14 @@ mod test {
         let res = parse_request(request.as_str());
         assert!(res.is_err());
         assert_eq!(get_error(res), InternalHttpError::InvalidUTF8Char);
+    }
+
+    #[test]
+    fn request_invalid_range() {
+        let request = "GET / HTTP/1.1\r\nRange:octets 32-1024";
+        let res = parse_request(request);
+        assert!(res.is_err());
+        assert_eq!(get_error(res), InternalHttpError::InvalidRange);
     }
 
     #[test]
