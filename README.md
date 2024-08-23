@@ -21,7 +21,7 @@ cargo run -- --ip 192.168.0.1 --port 3499
 - [x] Map some of the internal errors to actual HTTP response codes
 - [x] Fix known security issues during the parsing 
 - [x] Implement URL parsing 
-- [ ] Implement multipart requests
+- [x] Implement multipart requests
 - [x] Implement simple authentication
 - [ ] Implement HTTP cache
 - [x] Implement compression

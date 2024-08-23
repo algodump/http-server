@@ -14,6 +14,7 @@ use thiserror::Error;
 pub enum SuccessCode {
     OK = 200,
     Created = 201,
+    PartialContent = 206,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -61,6 +62,8 @@ pub enum InternalHttpError {
     HeaderOverflow,
     #[error("Encountered invalid UTF8 while parsing HTTP request")]
     InvalidUTF8Char,
+    #[error("Invalid range provided: {0}")]
+    InvalidRange(String),
 }
 
 pub const MAX_HEADERS_AMOUNT: usize = 10_000;
@@ -139,5 +142,16 @@ impl HttpMessageContent {
                 .to_string();
             return Ok(mime_type);
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Range {
+    pub from: u64,
+    pub to: u64,
+}
+impl Range {
+    pub fn new(from: u64, to: u64) -> Self {
+        Range { from, to }
     }
 }

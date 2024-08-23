@@ -75,6 +75,10 @@ impl HttpRequest {
     pub fn content(&self) -> &HttpMessageContent {
         &self.content
     }
+
+    pub fn range(&self) -> Option<Range> {
+        self.range.clone()
+    }
 }
 
 pub struct HttpRequestBuilder(HttpRequest);
@@ -179,7 +183,7 @@ fn choose_content_encoding(content_encodings: &Vec<ContentEncoding>) -> Result<C
 }
 
 // "bytes=0-1023"
-fn parse_range(data: &str) -> Result<(u32, u32)> {
+fn parse_range(data: &str) -> Result<Range> {
     let range = data
         .strip_prefix("bytes=")
         .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange(data.to_string())))?;
@@ -188,9 +192,9 @@ fn parse_range(data: &str) -> Result<(u32, u32)> {
         .split_once('-')
         .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange(range.to_string())))?;
 
-    let from = from.parse::<u32>()?;
-    let to = to.parse::<u32>()?;
-    Ok((from, to))
+    let from = from.parse()?;
+    let to = to.parse()?;
+    Ok(Range::new(from, to))
 }
 
 pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpRequest> {
@@ -276,10 +280,10 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
         info!("accept-encoding, wasn't provided by the client, sending data as is");
         None
     };
-
+    
     let range = if let Some(range) = headers.get("range") {
-        let (from, to) = parse_range(&range)?;
-        Some(Range { from, to })
+        let range = parse_range(&range)?;
+        Some(range)
     } else {
         None
     };
@@ -288,7 +292,7 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
         request_line: HttpRequestLine::new(method, url, version),
         content: HttpMessageContent::new(headers, body),
         requested_encoding,
-        range
+        range,
     });
 }
 

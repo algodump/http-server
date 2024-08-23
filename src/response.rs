@@ -1,8 +1,12 @@
-use std::str::FromStr;
-use std::{collections::HashMap, fs, io::Write};
+use std::{
+    fs::File,
+    os::windows::fs::FileExt,
+    str::FromStr,
+    {collections::HashMap, fs, io::Write},
+};
 
 use crate::common::{
-    ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, ResponseCode, SuccessCode,
+    ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, Range, ResponseCode, SuccessCode,
     DEFAULT_HTTP_VERSION,
 };
 
@@ -51,7 +55,9 @@ impl HttpResponseBuilder {
             version: String::from(version),
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
             encoding,
-        });
+        })
+        // General purpose headers
+        .header("Accept-Ranges", "bytes");
 
         if let Some(encoding) = encoding {
             builder.header("content-encoding", encoding.to_string())
@@ -61,12 +67,7 @@ impl HttpResponseBuilder {
     }
 
     pub fn default(status_code: ResponseCode) -> Self {
-        Self(HttpResponse {
-            status_code,
-            version: String::from(DEFAULT_HTTP_VERSION),
-            content: HttpMessageContent::new(HashMap::new(), Vec::new()),
-            encoding: None,
-        })
+        HttpResponseBuilder::new(status_code, DEFAULT_HTTP_VERSION, None)
     }
 
     pub fn header(
@@ -150,6 +151,21 @@ fn get_auth_information(authorization_string: &str) -> Result<(AuthMethod, &[u8]
     return Ok((auth_method, auth_data.as_bytes()));
 }
 
+fn read_file_content(file: &File, content_range: Option<Range>) -> Result<Vec<u8>> {
+    let range = if let Some(range) = content_range {
+        range
+    } else {
+        Range::new(0, file.metadata()?.len())
+    };
+
+    let body_size = (range.to - range.from) as usize;
+    let mut file_content = vec![0; body_size];
+    let bytes_read = file.seek_read(&mut file_content, range.from)?;
+    debug_assert!(bytes_read == body_size);
+
+    Ok(file_content)
+}
+
 pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
     let resource = http_request.get_url().resource();
     let version = http_request.get_version();
@@ -211,18 +227,17 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                         }
                     }
 
-                    let mb_file_content = fs::read(file_path);
-                    let Ok(file_content) = mb_file_content else {
+                    let mb_file = fs::File::open(file_path);
+                    let Ok(file) = mb_file else {
                         error!(
-                            "Can't read `{:?}` error = {:?}",
+                            "Can't open `{:?}` error = {:?}",
                             file_path,
-                            mb_file_content.unwrap_err()
+                            mb_file.unwrap_err()
                         );
                         return not_found_response_builder.build();
                     };
 
-                    let Ok(content_type) =
-                        http_request.content().get_content_type(file_path)
+                    let Ok(content_type) = http_request.content().get_content_type(file_path)
                     else {
                         error!("Unsupported media type: {}", resource);
                         return HttpResponseBuilder::new(
@@ -234,6 +249,28 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                     };
                     trace!("Content type: {}", content_type);
 
+                    // TODO: don't unwrap error, and don't use this pattern with mb_something then Ok()
+                    let mb_file_content = read_file_content(&file, http_request.range());
+                    let Ok(file_content) = mb_file_content else {
+                        return build_http_response_for_invalid_request(
+                            mb_file_content.unwrap_err(),
+                        );
+                    };
+
+                    if let Some(range) = http_request.range() {
+                        return HttpResponseBuilder::new(
+                            ResponseCode::Success(SuccessCode::PartialContent),
+                            &version,
+                            encoding,
+                        )
+                        .header("content-type", content_type)
+                        .header(
+                            "content-range",
+                            format!("bytes {}-{}", range.from, range.to),
+                        )
+                        .body(&file_content)
+                        .build();
+                    }
                     return ok_response_builder
                         .header("content-type", content_type)
                         .body(&file_content)
