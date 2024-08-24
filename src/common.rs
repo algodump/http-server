@@ -62,8 +62,6 @@ pub enum InternalHttpError {
     HeaderOverflow,
     #[error("Encountered invalid UTF8 while parsing HTTP request")]
     InvalidUTF8Char,
-    #[error("Invalid range provided")]
-    InvalidRange
 }
 
 pub const MAX_HEADERS_AMOUNT: usize = 10_000;
@@ -150,8 +148,29 @@ pub struct Range {
     pub from: u64,
     pub to: u64,
 }
+
 impl Range {
     pub fn new(from: u64, to: u64) -> Self {
         Range { from, to }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Ranges {
+    pub ranges: Vec<Range>,
+}
+
+// TODO: implement iterator for this type
+impl Ranges {
+    pub fn new(ranges: Vec<Range>) -> Self {
+        Self { ranges}
+    }
+
+    pub fn is_multipart(&self) -> bool {
+        self.ranges.len() > 1
+    }
+
+    pub fn first(&self) -> Option<&Range> {
+        self.ranges.first()
     }
 }

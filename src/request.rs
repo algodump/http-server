@@ -8,8 +8,9 @@ use std::{
 
 use crate::{
     common::{
-        ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, Range, MAX_HEADERS_AMOUNT,
-        MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH, REQUEST_TIMEOUT,
+        ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, Range, Ranges,
+        MAX_HEADERS_AMOUNT, MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH,
+        REQUEST_TIMEOUT,
     },
     compressor::ContentEncoding,
     url::Url,
@@ -52,7 +53,7 @@ pub struct HttpRequest {
     request_line: HttpRequestLine,
     content: HttpMessageContent,
     requested_encoding: Option<ContentEncoding>,
-    range: Option<Range>,
+    ranges: Option<Ranges>,
 }
 
 impl HttpRequest {
@@ -76,8 +77,8 @@ impl HttpRequest {
         &self.content
     }
 
-    pub fn range(&self) -> Option<Range> {
-        self.range.clone()
+    pub fn ranges(&self) -> Option<Ranges> {
+        self.ranges.clone()
     }
 }
 
@@ -88,12 +89,12 @@ impl HttpRequestBuilder {
             request_line,
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
             requested_encoding: None,
-            range: None,
+            ranges: None,
         })
     }
 
     pub fn set_range(mut self, range: Range) -> Self {
-        self.0.range = Some(range.clone());
+        self.0.ranges = Some(Ranges::new(vec![range.clone()]));
         self.header("Range", format!("{}-{}", range.from, range.to))
     }
 
@@ -188,18 +189,25 @@ fn choose_content_encoding(content_encodings: &Vec<ContentEncoding>) -> Result<C
 }
 
 // "bytes=0-1023"
-fn parse_range(data: &str) -> Result<Range> {
-    let range = data
-        .strip_prefix("bytes=")
-        .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange))?;
+fn parse_range(range: &String) -> Option<Range> {
+    let (from, to) = range.split_once('-')?;
+    let from = from.parse().ok()?;
+    let to = to.parse().ok()?;
 
-    let (from, to) = range
-        .split_once('-')
-        .ok_or_else(|| anyhow!(InternalHttpError::InvalidRange))?;
+    if from < to {
+        Some(Range::new(from, to))
+    } else {
+        None
+    }
+}
 
-    let from = from.parse()?;
-    let to = to.parse()?;
-    Ok(Range::new(from, to))
+fn parse_ranges(data: &String) -> Option<Ranges> {
+    let ranges = data.strip_prefix("bytes=")?;
+    let res = ranges
+        .split(',')
+        .map(|range| parse_range(&range.trim().to_string()))
+        .collect::<Option<Vec<Range>>>()?;
+    Some(Ranges::new(res))
 }
 
 pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpRequest> {
@@ -286,18 +294,13 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
         None
     };
 
-    let range = if let Some(range) = headers.get("range") {
-        let range = parse_range(&range)?;
-        Some(range)
-    } else {
-        None
-    };
+    let ranges = headers.get("range").and_then(parse_ranges);
 
     return Ok(HttpRequest {
         request_line: HttpRequestLine::new(method, url, version),
         content: HttpMessageContent::new(headers, body),
         requested_encoding,
-        range,
+        ranges,
     });
 }
 
@@ -422,14 +425,6 @@ mod test {
         let res = parse_request(request.as_str());
         assert!(res.is_err());
         assert_eq!(get_error(res), InternalHttpError::InvalidUTF8Char);
-    }
-
-    #[test]
-    fn request_invalid_range() {
-        let request = "GET / HTTP/1.1\r\nRange:octets 32-1024";
-        let res = parse_request(request);
-        assert!(res.is_err());
-        assert_eq!(get_error(res), InternalHttpError::InvalidRange);
     }
 
     #[test]

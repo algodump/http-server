@@ -1,13 +1,15 @@
 use std::{
-    fs::File,
+    cmp,
+    collections::HashMap,
+    fs::{self, File},
+    io::Write,
     os::windows::fs::FileExt,
     str::FromStr,
-    {collections::HashMap, fs, io::Write},
 };
 
 use crate::common::{
-    ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, Range, ResponseCode, SuccessCode,
-    DEFAULT_HTTP_VERSION,
+    ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, Range, Ranges, ResponseCode,
+    SuccessCode, DEFAULT_HTTP_VERSION,
 };
 
 use crate::auth::{AuthMethod, Authenticator};
@@ -36,6 +38,7 @@ impl ToString for ResponseCode {
     }
 }
 
+#[derive(Debug)]
 pub struct HttpResponse {
     status_code: ResponseCode,
     version: String,
@@ -151,11 +154,17 @@ fn get_auth_information(authorization_string: &str) -> Result<(AuthMethod, &[u8]
     return Ok((auth_method, auth_data.as_bytes()));
 }
 
-fn read_file_content(file: &File, content_range: Option<Range>) -> Result<Vec<u8>> {
-    let range = if let Some(range) = content_range {
-        range
+fn read_file_content(file: &File, content_range: Option<Ranges>) -> Result<Vec<u8>> {
+    let whole_file_range = Range::new(0, file.metadata()?.len());
+    let range = if let Some(ranges) = content_range {
+        if ranges.is_multipart() {
+            whole_file_range
+        } else {
+            let first = ranges.first().unwrap();
+            Range::new(first.from, first.to)
+        }
     } else {
-        Range::new(0, file.metadata()?.len())
+        whole_file_range
     };
 
     let body_size = (range.to - range.from) as usize;
@@ -164,6 +173,28 @@ fn read_file_content(file: &File, content_range: Option<Range>) -> Result<Vec<u8
     debug_assert!(bytes_read == body_size);
 
     Ok(file_content)
+}
+
+pub fn build_body_for_multipart_request(
+    ranges: &Ranges,
+    content_type: &str,
+    boundary: &str,
+    file_content: &Vec<u8>,
+) -> Vec<u8> {
+    let mut res: Vec<u8> = Vec::new();
+
+    for range in ranges.ranges.clone() {
+        res.extend_from_slice(format!("--{}\r\n", boundary.to_string()).as_bytes());
+        res.extend_from_slice(format!("content-type: {}\r\n", content_type).as_bytes());
+        res.extend_from_slice(
+            format!("content-range: bytes {}-{}\r\n\r\n", range.from, range.to).as_bytes(),
+        );
+        let from = range.from as usize;
+        let to = cmp::min((range.to + 1) as usize, file_content.len());
+        res.extend_from_slice(&file_content[from..to]);
+        res.extend_from_slice(b"\r\n");
+    }
+    res
 }
 
 pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
@@ -250,26 +281,43 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                     trace!("Content type: {}", content_type);
 
                     // TODO: don't unwrap error, and don't use this pattern with mb_something then Ok()
-                    let mb_file_content = read_file_content(&file, http_request.range());
+                    let mb_file_content = read_file_content(&file, http_request.ranges());
                     let Ok(file_content) = mb_file_content else {
                         return build_http_response_for_invalid_request(
                             mb_file_content.unwrap_err(),
                         );
                     };
 
-                    if let Some(range) = http_request.range() {
-                        return HttpResponseBuilder::new(
+                    if let Some(ranges) = http_request.ranges() {
+                        let partial_content_builder = HttpResponseBuilder::new(
                             ResponseCode::Success(SuccessCode::PartialContent),
                             &version,
                             encoding,
-                        )
-                        .header("content-type", content_type)
-                        .header(
-                            "content-range",
-                            format!("bytes {}-{}", range.from, range.to),
-                        )
-                        .body(&file_content)
-                        .build();
+                        );
+                        if ranges.is_multipart() {
+                            let boundary = "3d6b6a416f9b5";
+                            let multipart_content_type =
+                                format!("multipart/byteranges; boundary={}", boundary);
+                            return partial_content_builder
+                                .header("content-type", multipart_content_type)
+                                .body(&build_body_for_multipart_request(
+                                    &ranges,
+                                    &content_type,
+                                    &boundary,
+                                    &file_content,
+                                ))
+                                .build();
+                        } else {
+                            let range = ranges.first().unwrap();
+                            return partial_content_builder
+                                .header("content-type", content_type)
+                                .header(
+                                    "content-range",
+                                    format!("bytes {}-{}", range.from, range.to),
+                                )
+                                .body(&file_content)
+                                .build();
+                        }
                     }
                     return ok_response_builder
                         .header("content-type", content_type)
@@ -439,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn response_get_partial_content() {
+    fn response_get_partial_content_single_range() {
         let file_full_path = get_full_path("src/main.rs");
         let mut file = fs::File::open(&file_full_path).expect("Can't open test file");
         let mut file_content = Vec::new();
