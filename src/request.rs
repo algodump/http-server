@@ -188,28 +188,6 @@ fn choose_content_encoding(content_encodings: &Vec<ContentEncoding>) -> Result<C
     return Ok(supported_encoding.clone());
 }
 
-// "bytes=0-1023"
-fn parse_range(range: &String) -> Option<Range> {
-    let (from, to) = range.split_once('-')?;
-    let from = from.parse().ok()?;
-    let to = to.parse().ok()?;
-
-    if from < to {
-        Some(Range::new(from, to))
-    } else {
-        None
-    }
-}
-
-fn parse_ranges(data: &String) -> Option<Ranges> {
-    let ranges = data.strip_prefix("bytes=")?;
-    let res = ranges
-        .split(',')
-        .map(|range| parse_range(&range.trim().to_string()))
-        .collect::<Option<Vec<Range>>>()?;
-    Some(Ranges::new(res))
-}
-
 pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpRequest> {
     let mut buf_reader = BufReader::new(stream);
 
@@ -294,7 +272,7 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
         None
     };
 
-    let ranges = headers.get("range").and_then(parse_ranges);
+    let ranges = headers.get("range").and_then(|ranges| ranges.parse().ok());
 
     return Ok(HttpRequest {
         request_line: HttpRequestLine::new(method, url, version),

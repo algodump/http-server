@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     io::{Cursor, Read, Write},
     net::TcpStream,
+    str::FromStr,
     time::Duration,
 };
 
@@ -155,6 +156,32 @@ impl Range {
     }
 }
 
+impl FromStr for Range {
+    type Err = anyhow::Error;
+    // Example:  100-150
+    fn from_str(range: &str) -> Result<Self> {
+        fn parse_range(range: &str) -> Option<Range> {
+            let (from, to) = range.split_once('-')?;
+            let from = from.parse().ok()?;
+            let to = to.parse().ok()?;
+
+            if from < to {
+                Some(Range::new(from, to))
+            } else {
+                None
+            }
+        }
+        return parse_range(&range)
+            .ok_or_else(|| anyhow!(format!("Failed to parse range: {}", range)));
+    }
+}
+
+impl ToString for Range {
+    fn to_string(&self) -> String {
+        format!("{}-{}", self.from, self.to)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Ranges {
     pub ranges: Vec<Range>,
@@ -163,7 +190,7 @@ pub struct Ranges {
 // TODO: implement iterator for this type
 impl Ranges {
     pub fn new(ranges: Vec<Range>) -> Self {
-        Self { ranges}
+        Self { ranges }
     }
 
     pub fn is_multipart(&self) -> bool {
@@ -172,5 +199,36 @@ impl Ranges {
 
     pub fn first(&self) -> Option<&Range> {
         self.ranges.first()
+    }
+
+    pub fn len(&self) -> usize {
+        self.ranges.len()
+    }
+}
+
+impl FromStr for Ranges {
+    type Err = anyhow::Error;
+    // Example: bytes=0-50, 100-150"
+    fn from_str(ranges: &str) -> Result<Self> {
+        fn parse_ranges(data: &str) -> Option<Ranges> {
+            let ranges = data.strip_prefix("bytes=")?;
+            let res = ranges
+                .split(',')
+                .map(|range| range.trim().parse().ok())
+                .collect::<Option<Vec<Range>>>()?;
+            Some(Ranges::new(res))
+        }
+        return parse_ranges(&ranges)
+            .ok_or_else(|| anyhow!(format!("Failed to parse multipart range: {}", ranges)));
+    }
+}
+
+impl ToString for Ranges {
+    fn to_string(&self) -> String {
+        self.ranges
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
