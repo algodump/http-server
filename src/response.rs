@@ -125,6 +125,10 @@ impl HttpResponse {
     pub fn content(&self) -> &HttpMessageContent {
         &self.content
     }
+
+    pub fn partial_content_boundary<'life>() -> &'life str {
+        "3d6b6a416f9b5"
+    }
 }
 
 pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResponse {
@@ -295,7 +299,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                             encoding,
                         );
                         if ranges.is_multipart() {
-                            let boundary = "3d6b6a416f9b5";
+                            let boundary = HttpResponse::partial_content_boundary();
                             let multipart_content_type =
                                 format!("multipart/byteranges; boundary={}", boundary);
                             return partial_content_builder
@@ -397,7 +401,7 @@ mod tests {
         common::{MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH},
     };
     use crate::{
-        common::Range,
+        common::{Range, Ranges},
         request::{parse_http_request, HttpRequestBuilder, HttpRequestLine, HttpRequestMethod},
     };
 
@@ -413,6 +417,14 @@ mod tests {
             .expect("Failed to get current directory")
             .as_path()
             .join(file_path)
+    }
+
+    fn read_file(file_path: &PathBuf) -> Vec<u8> {
+        let mut file = fs::File::open(&file_path).expect("Can't open test file");
+        let mut file_content = Vec::new();
+        file.read_to_end(&mut file_content)
+            .expect("Failed to read test file");
+        file_content
     }
 
     // BUILDERS
@@ -469,10 +481,7 @@ mod tests {
     #[test]
     fn response_get_file() {
         let file_full_path = get_full_path("src/main.rs");
-        let mut file = fs::File::open(&file_full_path).expect("Can't open test file");
-        let mut file_content = Vec::new();
-        file.read_to_end(&mut file_content)
-            .expect("Failed to read test file");
+        let file_content = read_file(&file_full_path);
 
         let request =
             request_get_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
@@ -489,14 +498,11 @@ mod tests {
     #[test]
     fn response_get_partial_content_single_range() {
         let file_full_path = get_full_path("src/main.rs");
-        let mut file = fs::File::open(&file_full_path).expect("Can't open test file");
-        let mut file_content = Vec::new();
-        file.read_to_end(&mut file_content)
-            .expect("Failed to read test file");
-
+        let file_content = read_file(&file_full_path);
         let range = Range::new(0, 64);
+        let ranges = Ranges::new(vec![range.clone()]);
         let request = request_get_builder(format!("/files/{}", file_full_path.display()).as_str())
-            .set_range(range.clone())
+            .set_range(ranges.clone())
             .build();
         let response = build_http_response(&request);
 
@@ -512,6 +518,40 @@ mod tests {
             response.content.get_body().len(),
             (range.to - range.from) as usize
         );
+        let partial_file_content =
+            &file_content[(range.from as usize)..(range.to as usize)].to_vec();
+        assert_eq!(response.content.get_body(), partial_file_content);
+    }
+
+    #[test]
+    fn response_get_partial_content_multiple_ranges() {
+        let file_full_path = get_full_path("src/main.rs");
+        let range = Range::new(0, 64);
+        let ranges = Ranges::new(vec![range.clone(), range.clone()]);
+        let request = request_get_builder(format!("/files/{}", file_full_path.display()).as_str())
+            .set_range(ranges.clone())
+            .build();
+        let response = build_http_response(&request);
+
+        assert_eq!(
+            response.status_code,
+            ResponseCode::Success(SuccessCode::PartialContent)
+        );
+
+        fn count(s: &str, response_body: &String) -> usize {
+            response_body.match_indices(s).collect::<Vec<_>>().len()
+        }
+
+        let response_body = String::from_utf8(response.content().get_body().clone())
+            .expect("Failed to convert body to string");
+        let number_of_ranges = ranges.len();
+
+        assert_eq!(
+            count(HttpResponse::partial_content_boundary(), &response_body),
+            number_of_ranges
+        );
+        assert_eq!(count("content-type", &response_body), number_of_ranges);
+        assert_eq!(count("content-range", &response_body), number_of_ranges);
     }
 
     #[test]

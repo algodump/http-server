@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     common::{
-        ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, Range, Ranges,
+        ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, Ranges,
         MAX_HEADERS_AMOUNT, MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH,
         REQUEST_TIMEOUT,
     },
@@ -93,9 +93,15 @@ impl HttpRequestBuilder {
         })
     }
 
-    pub fn set_range(mut self, range: Range) -> Self {
-        self.0.ranges = Some(Ranges::new(vec![range.clone()]));
-        self.header("Range", format!("{}-{}", range.from, range.to))
+    pub fn set_range(mut self, ranges: Ranges) -> Self {
+        let range_content = if ranges.is_multipart() {
+            ranges.to_string()
+        } else {
+            let range = ranges.first().expect("Expected non-empty range");
+            format!("{}-{}", range.from, range.to)
+        };
+        self.0.ranges = Some(ranges);
+        self.header("Range", format!("bytes={}", range_content))
     }
 
     pub fn header(
