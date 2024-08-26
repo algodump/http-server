@@ -159,18 +159,13 @@ fn get_auth_information(authorization_string: &str) -> Result<(AuthMethod, &[u8]
 }
 
 fn read_file_content(file: &File, content_range: Option<Ranges>) -> Result<Vec<u8>> {
-    let whole_file_range = Range::new(0, file.metadata()?.len());
-    let range = if let Some(ranges) = content_range {
-        if ranges.is_multipart() {
-            whole_file_range
-        } else {
+    let range = match content_range {
+        Some(ranges) if !ranges.is_multipart() => {
             let first = ranges.first().unwrap();
             Range::new(first.from, first.to)
         }
-    } else {
-        whole_file_range
+        _ => Range::new(0, file.metadata()?.len()),
     };
-
     let body_size = (range.to - range.from) as usize;
     let mut file_content = vec![0; body_size];
     let bytes_read = file.seek_read(&mut file_content, range.from)?;
@@ -187,18 +182,57 @@ pub fn build_body_for_multipart_request(
 ) -> Vec<u8> {
     let mut res: Vec<u8> = Vec::new();
 
-    for range in ranges.ranges.clone() {
+    for range in ranges.elements() {
         res.extend_from_slice(format!("--{}\r\n", boundary.to_string()).as_bytes());
         res.extend_from_slice(format!("content-type: {}\r\n", content_type).as_bytes());
         res.extend_from_slice(
             format!("content-range: bytes {}-{}\r\n\r\n", range.from, range.to).as_bytes(),
         );
+
         let from = range.from as usize;
         let to = cmp::min((range.to + 1) as usize, file_content.len());
+
         res.extend_from_slice(&file_content[from..to]);
         res.extend_from_slice(b"\r\n");
     }
     res
+}
+
+pub fn build_response_for_multipart_request(
+    http_request: &HttpRequest,
+    file_content: &Vec<u8>,
+    ranges: &Ranges,
+    content_type: &str,
+) -> HttpResponse {
+    let partial_content_builder = HttpResponseBuilder::new(
+        ResponseCode::Success(SuccessCode::PartialContent),
+        &http_request.get_version(),
+        http_request.get_encoding(),
+    );
+
+    if ranges.is_multipart() {
+        let boundary = HttpResponse::partial_content_boundary();
+        let multipart_content_type = format!("multipart/byteranges; boundary={}", boundary);
+        return partial_content_builder
+            .header("content-type", multipart_content_type)
+            .body(&build_body_for_multipart_request(
+                &ranges,
+                &content_type,
+                &boundary,
+                &file_content,
+            ))
+            .build();
+    } else {
+        let range = ranges.first().unwrap();
+        return partial_content_builder
+            .header("content-type", content_type)
+            .header(
+                "content-range",
+                format!("bytes {}-{}", range.from, range.to),
+            )
+            .body(&file_content)
+            .build();
+    }
 }
 
 pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
@@ -293,36 +327,14 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                     };
 
                     if let Some(ranges) = http_request.ranges() {
-                        let partial_content_builder = HttpResponseBuilder::new(
-                            ResponseCode::Success(SuccessCode::PartialContent),
-                            &version,
-                            encoding,
+                        return build_response_for_multipart_request(
+                            &http_request,
+                            &file_content,
+                            &ranges,
+                            &content_type,
                         );
-                        if ranges.is_multipart() {
-                            let boundary = HttpResponse::partial_content_boundary();
-                            let multipart_content_type =
-                                format!("multipart/byteranges; boundary={}", boundary);
-                            return partial_content_builder
-                                .header("content-type", multipart_content_type)
-                                .body(&build_body_for_multipart_request(
-                                    &ranges,
-                                    &content_type,
-                                    &boundary,
-                                    &file_content,
-                                ))
-                                .build();
-                        } else {
-                            let range = ranges.first().unwrap();
-                            return partial_content_builder
-                                .header("content-type", content_type)
-                                .header(
-                                    "content-range",
-                                    format!("bytes {}-{}", range.from, range.to),
-                                )
-                                .body(&file_content)
-                                .build();
-                        }
                     }
+
                     return ok_response_builder
                         .header("content-type", content_type)
                         .body(&file_content)

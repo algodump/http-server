@@ -184,10 +184,9 @@ impl ToString for Range {
 
 #[derive(Debug, Clone)]
 pub struct Ranges {
-    pub ranges: Vec<Range>,
+    ranges: Vec<Range>,
 }
 
-// TODO: implement iterator for this type
 impl Ranges {
     pub fn new(ranges: Vec<Range>) -> Self {
         Self { ranges }
@@ -203,6 +202,10 @@ impl Ranges {
 
     pub fn len(&self) -> usize {
         self.ranges.len()
+    }
+
+    pub fn elements(&self) -> &Vec<Range> {
+        &self.ranges
     }
 }
 
