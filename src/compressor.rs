@@ -1,8 +1,9 @@
 use anyhow::anyhow;
-use flate2::read::{DeflateEncoder, GzEncoder};
-use flate2::Compression;
-use std::io::Read;
-use std::str::FromStr;
+use flate2::{
+    read::{DeflateEncoder, GzEncoder},
+    Compression,
+};
+use std::{io::Read, str::FromStr};
 
 // https://www.iana.org/assignments/http-parameters/http-parameters.xhtml#content-coding
 #[derive(Debug, Clone, Copy, PartialEq)]

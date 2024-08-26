@@ -13,7 +13,7 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SuccessCode {
-    OK = 200,
+    Ok = 200,
     Created = 201,
     PartialContent = 206,
 }
@@ -106,7 +106,7 @@ impl HttpMessageContent {
     }
 
     pub fn get_header(&self, header_name: impl Into<String>) -> Option<&String> {
-        self.headers.get(&header_name.into())
+        self.headers.get(&header_name.into().to_ascii_lowercase())
     }
 
     pub fn add_header(

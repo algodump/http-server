@@ -7,14 +7,12 @@ use std::{
     str::FromStr,
 };
 
-use crate::common::{
-    ErrorCode, HttpMessageContent, HttpStream, InternalHttpError, Range, Ranges, ResponseCode,
-    SuccessCode, DEFAULT_HTTP_VERSION,
+use crate::{
+    auth::{AuthMethod, Authenticator},
+    common::*,
+    compressor::{Compressor, ContentEncoding},
+    request::{HttpRequest, HttpRequestMethod},
 };
-
-use crate::auth::{AuthMethod, Authenticator};
-use crate::compressor::{Compressor, ContentEncoding};
-use crate::request::{HttpRequest, HttpRequestMethod};
 
 use anyhow::{anyhow, Error, Result};
 use log::{error, trace};
@@ -32,7 +30,11 @@ impl ToString for ResponseCode {
             result
         }
         match self {
-            ResponseCode::Success(code) => return split_camel_case(format!("{:?}", code)),
+            ResponseCode::Success(code) => match code {
+                SuccessCode::Ok => return "OK".to_string(),
+                _ => return split_camel_case(format!("{:?}", code)),
+            },
+
             ResponseCode::Error(code) => return split_camel_case(format!("{:?}", code)),
         }
     }
@@ -60,7 +62,7 @@ impl HttpResponseBuilder {
             encoding,
         })
         // General purpose headers
-        .header("Accept-Ranges", "bytes");
+        .header("accept-ranges", "bytes");
 
         if let Some(encoding) = encoding {
             builder.header("content-encoding", encoding.to_string())
@@ -105,7 +107,7 @@ impl HttpResponse {
         );
 
         for (header_name, header_content) in self.content.get_headers() {
-            response.push_str(&format!("{} : {}\r\n", header_name, header_content));
+            response.push_str(&format!("{}: {}\r\n", header_name, header_content));
         }
         response.push_str("\r\n");
 
@@ -247,7 +249,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
     );
 
     let ok_response_builder =
-        HttpResponseBuilder::new(ResponseCode::Success(SuccessCode::OK), &version, encoding);
+        HttpResponseBuilder::new(ResponseCode::Success(SuccessCode::Ok), &version, encoding);
     let not_found_response_builder =
         HttpResponseBuilder::new(ResponseCode::Error(ErrorCode::NotFound), &version, encoding);
     let internal_server_error_response_builder = HttpResponseBuilder::new(
@@ -395,10 +397,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_http_response, build_http_response_for_invalid_request, ContentEncoding, ErrorCode,
-        HttpResponse, ResponseCode, SuccessCode,
-    };
+    use super::*;
 
     use std::{
         env::{current_dir, temp_dir},
@@ -407,14 +406,11 @@ mod tests {
         path::PathBuf,
     };
 
-    use crate::url::Url;
     use crate::{
         auth::Authenticator,
-        common::{MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH},
-    };
-    use crate::{
-        common::{Range, Ranges},
+        common::{Range, Ranges, MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH},
         request::{parse_http_request, HttpRequestBuilder, HttpRequestLine, HttpRequestMethod},
+        url::Url,
     };
 
     // UTILS
@@ -462,7 +458,7 @@ mod tests {
         let request = request_get_builder("/").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::OK));
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
     }
 
     #[test]
@@ -474,7 +470,7 @@ mod tests {
         let response = build_http_response(&request);
 
         let response = response;
-        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::OK));
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
         assert!(response
             .content
             .get_body()
@@ -486,7 +482,7 @@ mod tests {
         let request = request_get_builder("/echo/test").build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::OK));
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
         assert!(response.content.get_body().starts_with(b"test"));
     }
 
@@ -499,7 +495,7 @@ mod tests {
             request_get_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
         let response = build_http_response(&request);
 
-        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::OK));
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
         assert_eq!(
             response.content.get_header("content-type").unwrap(),
             "text/x-rust"

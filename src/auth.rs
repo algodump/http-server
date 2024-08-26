@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
-use base64::prelude::*;
 use anyhow::{anyhow, Error};
+use base64::prelude::*;
 
 #[derive(Debug)]
 pub enum AuthMethod {
@@ -31,7 +31,7 @@ impl Authenticator {
     pub fn default_credentials() -> String {
         BASE64_STANDARD.encode("admin:password")
     }
-    
+
     pub fn authenticate(data: &[u8], auth_type: &AuthMethod) -> bool {
         fn auth_basic(data: &[u8]) -> bool {
             Authenticator::default_credentials().as_bytes().eq(data)
