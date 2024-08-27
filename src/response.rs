@@ -99,29 +99,37 @@ impl HttpResponseBuilder {
 
 impl HttpResponse {
     pub fn write_to(&self, stream: &mut impl HttpStream) -> Result<()> {
-        let mut response = format!(
-            "HTTP/{} {} {}\r\n",
-            self.version,
-            self.status_code.get_code_value(),
-            self.status_code.to_string()
+        stream.write_all(&self.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn as_bytes(&self) -> Vec<u8> {
+        let mut response = Vec::new();
+        response.extend_from_slice(
+            format!(
+                "HTTP/{} {} {}\r\n",
+                self.version,
+                self.status_code.get_code_value(),
+                self.status_code.to_string()
+            )
+            .as_bytes(),
         );
 
         for (header_name, header_content) in self.content.get_headers() {
-            response.push_str(&format!("{}: {}\r\n", header_name, header_content));
+            response
+                .extend_from_slice(format!("{}: {}\r\n", header_name, header_content).as_bytes());
         }
-        response.push_str("\r\n");
-
-        stream.write_all(response.as_bytes())?;
+        response.extend_from_slice(b"\r\n");
 
         if let Some(content_encoding) = self.encoding {
-            stream.write_all(&Compressor::compress(
+            response.extend_from_slice(&Compressor::compress(
                 self.content.get_body(),
                 content_encoding,
-            ))?;
+            ));
         } else {
-            stream.write_all(&self.content.get_body())?;
+            response.extend_from_slice(&self.content.get_body());
         }
-        Ok(())
+        response
     }
 
     pub fn content(&self) -> &HttpMessageContent {
