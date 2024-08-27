@@ -1,6 +1,7 @@
 {
     "cSpell.words": [
         "flate2",
+        "hasher",
         "thiserror"
     ]
 }
