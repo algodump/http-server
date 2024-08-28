@@ -12,6 +12,7 @@ use log::trace;
 
 use crate::response::HttpResponse;
 
+#[derive(Debug, Clone)]
 pub struct CacheControl {
     cache_directives: HashMap<String, String>,
 }
@@ -53,14 +54,27 @@ impl Cache {
         Path::new(PATH_TO_CACHE).join(resource_name.to_string())
     }
 
-    pub fn add(resource: &str, http_response: &HttpResponse) -> Result<()> {
-        fs::create_dir_all(PATH_TO_CACHE)?;
+    pub fn add(
+        resource: &str,
+        http_response: &HttpResponse,
+        cache_control: &Option<CacheControl>,
+    ) -> Result<()> {
+        let store_allowed = if let Some(cache_control) = cache_control {
+            cache_control.store_allowed()
+        } else {
+            true
+        };
+        
+        if store_allowed {
+            fs::create_dir_all(PATH_TO_CACHE)?;
 
-        let resource_path = Cache::get_resource_path(resource);
-        let mut file = File::create(resource_path)?;
+            let resource_path = Cache::get_resource_path(resource);
+            let mut file = File::create(resource_path)?;
 
-        trace!("Adding response for {:?} to cache", resource);
-        file.write_all(&http_response.as_bytes())?;
+            trace!("Adding response for {:?} to cache", resource);
+            file.write_all(&http_response.as_bytes())?;
+        }
+
         Ok(())
     }
 

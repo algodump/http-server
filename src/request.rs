@@ -6,7 +6,7 @@ use std::{
     thread,
 };
 
-use crate::{common::*, compressor::ContentEncoding, url::Url};
+use crate::{cache::CacheControl, common::*, compressor::ContentEncoding, url::Url};
 
 use anyhow::{anyhow, Context, Result};
 use log::{info, trace};
@@ -46,6 +46,7 @@ pub struct HttpRequest {
     content: HttpMessageContent,
     requested_encoding: Option<ContentEncoding>,
     ranges: Option<Ranges>,
+    cache_control: Option<CacheControl>,
 }
 
 impl HttpRequest {
@@ -72,6 +73,10 @@ impl HttpRequest {
     pub fn ranges(&self) -> Option<Ranges> {
         self.ranges.clone()
     }
+
+    pub fn cache_control(&self) -> &Option<CacheControl> {
+        &self.cache_control
+    }
 }
 
 pub struct HttpRequestBuilder(HttpRequest);
@@ -82,6 +87,7 @@ impl HttpRequestBuilder {
             content: HttpMessageContent::new(HashMap::new(), Vec::new()),
             requested_encoding: None,
             ranges: None,
+            cache_control: None,
         })
     }
 
@@ -271,12 +277,16 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
     };
 
     let ranges = headers.get("range").and_then(|ranges| ranges.parse().ok());
+    let cache_control = headers
+        .get("cache-control")
+        .and_then(|cache_control| cache_control.parse().ok());
 
     return Ok(HttpRequest {
         request_line: HttpRequestLine::new(method, url, version),
         content: HttpMessageContent::new(headers, body),
         requested_encoding,
         ranges,
+        cache_control
     });
 }
 

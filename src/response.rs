@@ -15,6 +15,7 @@ use crate::{
 };
 
 use anyhow::{anyhow, Error, Result};
+use chrono::Utc;
 use log::{error, trace};
 
 impl ToString for ResponseCode {
@@ -62,7 +63,11 @@ impl HttpResponseBuilder {
             encoding,
         })
         // General purpose headers
-        .header("accept-ranges", "bytes");
+        .header("accept-ranges", "bytes")
+        .header(
+            "last-modified",
+            Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string(),
+        );
 
         if let Some(encoding) = encoding {
             builder.header("content-encoding", encoding.to_string())

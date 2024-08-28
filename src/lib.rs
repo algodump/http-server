@@ -18,15 +18,17 @@ pub fn handel_connection(stream: &mut impl HttpStream) -> Result<()> {
     match http_request {
         Ok(request) => {
             let resource = request.get_url().resource();
-            // TODO: parse cache control string to check if the cache usage is allowed
+            let cache_control = request.cache_control();
+
             if let Ok(raw_response) = Cache::retrieve(&resource) {
                 stream
                     .write_all(&raw_response)
                     .context("Failed to write raw response to stream")?;
                 return Ok(());
             }
+
             let response = build_http_response(&request);
-            Cache::add(&resource, &response)?;
+            Cache::add(&resource, &response, cache_control)?;
 
             response
                 .write_to(stream)
