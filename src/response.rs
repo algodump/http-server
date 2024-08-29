@@ -92,7 +92,14 @@ impl HttpResponseBuilder {
     }
 
     pub fn body(mut self, body: &[u8]) -> Self {
-        self.0.content.set_body(Vec::from(body));
+        if let Some(content_encoding) = self.0.encoding {
+            self.0
+                .content
+                .set_body(Compressor::compress(body, content_encoding));
+        } else {
+            self.0.content.set_body(Vec::from(body));
+        };
+
         let body_length = self.0.content.get_body().len();
         self.header("content-length", body_length.to_string())
     }
@@ -124,16 +131,9 @@ impl HttpResponse {
             response
                 .extend_from_slice(format!("{}: {}\r\n", header_name, header_content).as_bytes());
         }
+        
         response.extend_from_slice(b"\r\n");
-
-        if let Some(content_encoding) = self.encoding {
-            response.extend_from_slice(&Compressor::compress(
-                self.content.get_body(),
-                content_encoding,
-            ));
-        } else {
-            response.extend_from_slice(&self.content.get_body());
-        }
+        response.extend_from_slice(&self.content.get_body());
         response
     }
 
