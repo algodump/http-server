@@ -91,6 +91,15 @@ impl HttpResponseBuilder {
         self
     }
 
+    // TODO: don't read body for the head request, just query the length of resource
+    pub fn optional_body(self, body: &[u8], include_body: bool) -> Self {
+        if include_body {
+            self.body(body)
+        } else {
+            self.header("content-length", body.len().to_string())
+        }
+    }
+
     pub fn body(mut self, body: &[u8]) -> Self {
         if let Some(content_encoding) = self.0.encoding {
             self.0
@@ -131,7 +140,7 @@ impl HttpResponse {
             response
                 .extend_from_slice(format!("{}: {}\r\n", header_name, header_content).as_bytes());
         }
-        
+
         response.extend_from_slice(b"\r\n");
         response.extend_from_slice(&self.content.get_body());
         response
@@ -224,18 +233,17 @@ pub fn build_response_for_multipart_request(
         &http_request.get_version(),
         http_request.get_encoding(),
     );
+    let is_not_head_request = http_request.get_method() != HttpRequestMethod::HEAD;
 
     if ranges.is_multipart() {
         let boundary = HttpResponse::partial_content_boundary();
         let multipart_content_type = format!("multipart/byteranges; boundary={}", boundary);
         return partial_content_builder
             .header("content-type", multipart_content_type)
-            .body(&build_body_for_multipart_request(
-                &ranges,
-                &content_type,
-                &boundary,
-                &file_content,
-            ))
+            .optional_body(
+                &build_body_for_multipart_request(&ranges, &content_type, &boundary, &file_content),
+                is_not_head_request,
+            )
             .build();
     } else {
         let range = ranges.first().unwrap();
@@ -245,7 +253,7 @@ pub fn build_response_for_multipart_request(
                 "content-range",
                 format!("bytes {}-{}", range.from, range.to),
             )
-            .body(&file_content)
+            .optional_body(&file_content, is_not_head_request)
             .build();
     }
 }
@@ -254,9 +262,12 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
     let resource = http_request.get_url().resource();
     let version = http_request.get_version();
     let encoding = http_request.get_encoding();
+    let method = http_request.get_method();
+    let is_not_head_request = method != HttpRequestMethod::HEAD;
+
     trace!(
         "Method: {:?}, Resource: {}, Headers: {:?}",
-        http_request.get_method(),
+        method,
         resource,
         http_request.content().get_headers()
     );
@@ -271,23 +282,18 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
         encoding,
     );
 
-    match http_request.get_method() {
-        HttpRequestMethod::GET => match resource.as_str() {
-            "/" => {
-                return ok_response_builder.build();
-            }
+    match method {
+        HttpRequestMethod::GET | HttpRequestMethod::HEAD => match resource.as_str() {
+            "/" => ok_response_builder.build(),
             "/user-agent" => {
-                let user_agent_response =
-                    if let Some(user_agent) = http_request.content().get_header("user-agent") {
-                        ok_response_builder
-                            .header("content-type", "text/plain")
-                            .body(user_agent.as_bytes())
-                            .build()
-                    } else {
-                        not_found_response_builder.build()
-                    };
-
-                return user_agent_response;
+                if let Some(user_agent) = http_request.content().get_header("user-agent") {
+                    ok_response_builder
+                        .header("content-type", "text/plain")
+                        .optional_body(user_agent.as_bytes(), is_not_head_request)
+                        .build()
+                } else {
+                    not_found_response_builder.build()
+                }
             }
             _ => {
                 if let Some(file_path) = resource.strip_prefix("/files/") {
@@ -352,12 +358,12 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
 
                     return ok_response_builder
                         .header("content-type", content_type)
-                        .body(&file_content)
+                        .optional_body(&file_content, is_not_head_request)
                         .build();
                 } else if let Some(echo) = resource.strip_prefix("/echo/") {
                     let echo_response = ok_response_builder
                         .header("content-type", "text/plain")
-                        .body(echo.as_bytes())
+                        .optional_body(echo.as_bytes(), is_not_head_request)
                         .build();
 
                     return echo_response;

@@ -260,7 +260,7 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
     }
 
     let mut body = Vec::new();
-    if method != HttpRequestMethod::HEAD || content_length != 0 {
+    if content_length != 0 {
         body.resize(content_length as usize, 0);
         buf_reader
             .read_exact(&mut body)
