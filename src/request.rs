@@ -23,6 +23,15 @@ pub enum HttpRequestMethod {
     CONNECT,
 }
 
+impl HttpRequestMethod {
+    pub fn supported_methods() -> Vec<String> {
+        ["GET", "HEAD", "POST", "OPTIONS"]
+            .into_iter()
+            .map(|val| val.to_string())
+            .collect()
+    }
+}
+
 #[derive(Debug)]
 pub struct HttpRequestLine {
     method: HttpRequestMethod,
@@ -286,7 +295,7 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
         content: HttpMessageContent::new(headers, body),
         requested_encoding,
         ranges,
-        cache_control
+        cache_control,
     });
 }
 

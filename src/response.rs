@@ -65,9 +65,10 @@ impl HttpResponseBuilder {
         // General purpose headers
         .header("accept-ranges", "bytes")
         .header(
-            "last-modified",
+            "date",
             Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string(),
-        );
+        )
+        .header("server", "simple http");
 
         if let Some(encoding) = encoding {
             builder.header("content-encoding", encoding.to_string())
@@ -403,6 +404,12 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
             }
             return internal_server_error_response_builder.build();
         }
+        HttpRequestMethod::OPTIONS => {
+            // TODO: add content type and other related headers
+            return ok_response_builder
+                .header("allow", HttpRequestMethod::supported_methods().join(", "))
+                .build()
+        }
         _ => {
             return HttpResponseBuilder::new(
                 ResponseCode::Error(ErrorCode::NotImplemented),
@@ -475,6 +482,14 @@ mod tests {
         HttpRequestBuilder::new(HttpRequestLine::new(
             HttpRequestMethod::HEAD,
             Url::new(resource),
+            String::from("HTTP/1.1"),
+        ))
+    }
+
+    fn request_options_builder() -> HttpRequestBuilder {
+        HttpRequestBuilder::new(HttpRequestLine::new(
+            HttpRequestMethod::OPTIONS,
+            Url::new("*"),
             String::from("HTTP/1.1"),
         ))
     }
@@ -774,13 +789,13 @@ mod tests {
         );
     }
 
-    // HEAD requests 
+    // HEAD requests
     #[test]
     fn response_head_file() {
         let file_full_path = get_full_path("src/main.rs");
 
         let request =
-        request_head_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
+            request_head_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
         let response = build_http_response(&request);
 
         assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
@@ -790,5 +805,15 @@ mod tests {
         );
 
         assert!(response.content.get_body().is_empty());
+    }
+
+    // OPTIONS requests
+    #[test]
+    fn response_options() {
+        let options_request = request_options_builder().build();
+        let response = build_http_response(&options_request);
+
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
+        assert!(response.content().get_header("allow").is_some());
     }
 }
