@@ -471,6 +471,14 @@ mod tests {
         ))
     }
 
+    fn request_head_builder(resource: &str) -> HttpRequestBuilder {
+        HttpRequestBuilder::new(HttpRequestLine::new(
+            HttpRequestMethod::HEAD,
+            Url::new(resource),
+            String::from("HTTP/1.1"),
+        ))
+    }
+
     // GET REQUEST TESTS
     #[test]
     fn response_get_empty() {
@@ -764,5 +772,23 @@ mod tests {
             response.status_code,
             ResponseCode::Error(ErrorCode::InternalServerError)
         );
+    }
+
+    // HEAD requests 
+    #[test]
+    fn response_head_file() {
+        let file_full_path = get_full_path("src/main.rs");
+
+        let request =
+        request_head_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
+        let response = build_http_response(&request);
+
+        assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
+        assert_eq!(
+            response.content.get_header("content-type").unwrap(),
+            "text/x-rust"
+        );
+
+        assert!(response.content.get_body().is_empty());
     }
 }
