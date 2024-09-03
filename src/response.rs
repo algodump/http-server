@@ -405,10 +405,21 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
             return internal_server_error_response_builder.build();
         }
         HttpRequestMethod::OPTIONS => {
-            // TODO: add content type and other related headers
+            let Ok(content_type) = http_request.content().get_content_type(&resource) else {
+                error!("Unsupported media type: {}", resource);
+                return HttpResponseBuilder::new(
+                    ResponseCode::Error(ErrorCode::UnsupportedMediaType),
+                    &version,
+                    encoding,
+                )
+                .build();
+            };
+
             return ok_response_builder
                 .header("allow", HttpRequestMethod::supported_methods().join(", "))
-                .build()
+                .header("content-type", content_type)
+                .header("content-length", "0")
+                .build();
         }
         _ => {
             return HttpResponseBuilder::new(
@@ -486,10 +497,10 @@ mod tests {
         ))
     }
 
-    fn request_options_builder() -> HttpRequestBuilder {
+    fn request_options_builder(resource: &str) -> HttpRequestBuilder {
         HttpRequestBuilder::new(HttpRequestLine::new(
             HttpRequestMethod::OPTIONS,
-            Url::new("*"),
+            Url::new(resource),
             String::from("HTTP/1.1"),
         ))
     }
@@ -810,7 +821,10 @@ mod tests {
     // OPTIONS requests
     #[test]
     fn response_options() {
-        let options_request = request_options_builder().build();
+        let file_full_path = get_full_path("src/main.rs");
+        let options_request =
+            request_options_builder(format!("/files/{}", file_full_path.display()).as_str())
+                .build();
         let response = build_http_response(&options_request);
 
         assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
