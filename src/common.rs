@@ -94,7 +94,6 @@ pub struct HttpMessageContent {
     body: Vec<u8>,
 }
 
-// TODO: write your own MIME detector
 fn determine_content_type(resource: &str) -> Option<mime_guess::Mime> {
     let mime_type = from_path(resource);
     return mime_type.first();

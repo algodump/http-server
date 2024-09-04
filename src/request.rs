@@ -10,10 +10,10 @@ use crate::{
     auth::AuthMethod, cache::CacheControl, common::*, compressor::ContentEncoding, url::Url,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use log::{info, trace};
 
-#[derive(Debug, enum_utils::FromStr, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HttpRequestMethod {
     OPTIONS,
     GET,
@@ -23,6 +23,23 @@ pub enum HttpRequestMethod {
     DELETE,
     TRACE,
     CONNECT,
+}
+
+impl FromStr for HttpRequestMethod {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "OPTIONS" => Ok(HttpRequestMethod::OPTIONS),
+            "GET" => Ok(HttpRequestMethod::GET),
+            "HEAD" => Ok(HttpRequestMethod::HEAD),
+            "POST" => Ok(HttpRequestMethod::POST),
+            "PUT" => Ok(HttpRequestMethod::PUT),
+            "DELETE" => Ok(HttpRequestMethod::DELETE),
+            "TRACE" => Ok(HttpRequestMethod::TRACE),
+            "CONNECT" => Ok(HttpRequestMethod::CONNECT),
+            _ => Err(anyhow!("Unsupported HTTP request method")),
+        }
+    }
 }
 
 impl HttpRequestMethod {

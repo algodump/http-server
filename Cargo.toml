@@ -10,7 +10,6 @@ flate2 = "1.0"
 threadpool = "1.8.1"
 anyhow = "1.0.86"
 thiserror = "1.0"
-enum-utils = "0.1.2"
 mime_guess = "2.0.5"
 log = "0.4.22"
 clap = { version = "4.5.13", features = ["derive"] }
