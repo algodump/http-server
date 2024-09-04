@@ -33,11 +33,11 @@ impl log::Log for ConsoleLogger {
 }
 
 fn default_ip() -> Ipv4Addr {
-    return Ipv4Addr::new(127, 0, 0, 1);
+    Ipv4Addr::new(127, 0, 0, 1)
 }
 
 fn default_port() -> u16 {
-    return 4421;
+    4421
 }
 
 #[derive(Parser, Debug, Default)]

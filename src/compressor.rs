@@ -32,8 +32,8 @@ impl ContentEncoding {
 impl ToString for ContentEncoding {
     fn to_string(&self) -> String {
         match self {
-            ContentEncoding::Pack200gzip => return "pack200-gzip".to_string(),
-            _ => return format!("{:?}", self).to_lowercase(),
+            ContentEncoding::Pack200gzip => "pack200-gzip".to_string(),
+            _ => format!("{:?}", self).to_lowercase(),
         }
     }
 }
@@ -42,7 +42,7 @@ impl FromStr for ContentEncoding {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.starts_with("*") {
-            return Ok(DEFAULT_ENCODING);
+            Ok(DEFAULT_ENCODING)
         } else {
             match s {
                 "aes128gcm" => Ok(ContentEncoding::Aes128gcm),
@@ -71,15 +71,11 @@ impl Compressor {
             ret_vec
         }
         match content_encoding {
-            ContentEncoding::Gzip => {
-                return compress_internal(GzEncoder::new(data, Compression::fast()));
-            }
+            ContentEncoding::Gzip => compress_internal(GzEncoder::new(data, Compression::fast())),
             ContentEncoding::Deflate => {
-                return compress_internal(DeflateEncoder::new(data, Compression::fast()));
+                compress_internal(DeflateEncoder::new(data, Compression::fast()))
             }
-            ContentEncoding::Identity => {
-                return Vec::from(data);
-            }
+            ContentEncoding::Identity => Vec::from(data),
             _ => panic!("Unsupported content encoding {:?}", content_encoding),
         }
     }

@@ -80,19 +80,19 @@ pub struct HttpRequest {
 
 impl HttpRequest {
     pub fn get_method(&self) -> HttpRequestMethod {
-        return self.request_line.method;
+        self.request_line.method
     }
 
     pub fn get_url(&self) -> Url {
-        return self.request_line.url.clone();
+        self.request_line.url.clone()
     }
 
     pub fn get_version(&self) -> String {
-        return self.request_line.version.clone();
+        self.request_line.version.clone()
     }
 
     pub fn get_encoding(&self) -> Option<ContentEncoding> {
-        return self.requested_encoding;
+        self.requested_encoding
     }
 
     pub fn content(&self) -> &HttpMessageContent {
@@ -169,7 +169,7 @@ fn get_http_version(version_line: &str) -> Result<String> {
         .find(|&&version| version_line.ends_with(version))
         .ok_or_else(|| InternalHttpError::KnownError(ErrorCode::HTTPVersionNotSupported))?;
 
-    return Ok(version.to_string());
+    Ok(version.to_string())
 }
 
 fn parse_header(header: &String) -> Result<(String, String)> {
@@ -187,10 +187,10 @@ fn parse_header(header: &String) -> Result<(String, String)> {
     }
 
     trace!("Parsed header: {} {}", header_parsed.0, header_parsed.1);
-    return Ok((
+    Ok((
         header_parsed.0.trim().to_ascii_lowercase(),
         header_parsed.1.trim().to_string(),
-    ));
+    ))
 }
 
 // Parse string: "br;q=1.0, gzip;q=0.8, *;q=0.1"
@@ -216,7 +216,7 @@ fn parse_encodings(accepted_encodings: &str) -> Result<Vec<ContentEncoding>> {
         .into_iter()
         .map(|(content_encoding, _)| content_encoding)
         .collect();
-    return Ok(res);
+    Ok(res)
 }
 
 fn choose_content_encoding(content_encodings: &Vec<ContentEncoding>) -> Result<ContentEncoding> {
@@ -228,7 +228,7 @@ fn choose_content_encoding(content_encodings: &Vec<ContentEncoding>) -> Result<C
             ErrorCode::NotAcceptable
         )));
     };
-    return Ok(supported_encoding.clone());
+    Ok(supported_encoding.clone())
 }
 
 fn get_auth_information(authorization_string: &str) -> Result<(AuthMethod, String)> {
@@ -332,14 +332,14 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
         .get("authorization")
         .and_then(|auth_string| get_auth_information(auth_string).ok());
 
-    return Ok(HttpRequest {
+    Ok(HttpRequest {
         request_line: HttpRequestLine::new(method, url, version),
         content: HttpMessageContent::new(headers, body),
         requested_encoding,
         ranges,
         cache_control,
         auth_info,
-    });
+    })
 }
 
 pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
@@ -356,7 +356,7 @@ pub fn parse_http_request(stream: &mut impl HttpStream) -> Result<HttpRequest> {
             ErrorCode::RequestTimeout
         )));
     };
-    return parsed_http_request;
+    parsed_http_request
 }
 
 #[cfg(test)]
@@ -370,14 +370,14 @@ mod test {
     fn get_error(res: Result<HttpRequest>) -> InternalHttpError {
         let error = res.unwrap_err();
         match error.downcast::<InternalHttpError>() {
-            Ok(http_error) => return http_error,
+            Ok(http_error) => http_error,
             _ => panic!("Not an InternalHttpError"),
         }
     }
 
     fn parse_request(request: &str) -> Result<HttpRequest> {
         let mut stream = Cursor::new(request.as_bytes().to_vec());
-        return parse_http_request(&mut stream);
+        parse_http_request(&mut stream)
     }
 
     // SUCCESS
@@ -494,6 +494,6 @@ mod test {
                 CHARSET[idx] as char
             })
             .collect();
-        return string;
+        string
     }
 }

@@ -45,8 +45,8 @@ pub enum ResponseCode {
 impl ResponseCode {
     pub fn get_code_value(&self) -> u16 {
         match self {
-            ResponseCode::Success(code) => return *code as u16,
-            ResponseCode::Error(code) => return *code as u16,
+            ResponseCode::Success(code) => *code as u16,
+            ResponseCode::Error(code) => *code as u16,
         }
     }
 }
@@ -96,7 +96,7 @@ pub struct HttpMessageContent {
 
 fn determine_content_type(resource: &str) -> Option<mime_guess::Mime> {
     let mime_type = from_path(resource);
-    return mime_type.first();
+    mime_type.first()
 }
 
 impl HttpMessageContent {
@@ -132,13 +132,13 @@ impl HttpMessageContent {
     pub fn get_content_type(&self, path_to_resource: &str) -> Result<String> {
         if let Some(content_type) = self.headers.get("content-type") {
             // TODO: verify this, at it might not be supported by the server
-            return Ok(content_type.clone());
+            Ok(content_type.clone())
         } else {
             trace!("Content type wasn't provided by the client, determine content type based on the resource name");
             let mime_type = determine_content_type(&path_to_resource)
                 .ok_or_else(|| anyhow!("Failed to determine MIME type"))?
                 .to_string();
-            return Ok(mime_type);
+            Ok(mime_type)
         }
     }
 }
@@ -170,8 +170,7 @@ impl FromStr for Range {
                 None
             }
         }
-        return parse_range(&range)
-            .ok_or_else(|| anyhow!(format!("Failed to parse range: {}", range)));
+        parse_range(&range).ok_or_else(|| anyhow!(format!("Failed to parse range: {}", range)))
     }
 }
 
@@ -220,8 +219,8 @@ impl FromStr for Ranges {
                 .collect::<Option<Vec<Range>>>()?;
             Some(Ranges::new(res))
         }
-        return parse_ranges(&ranges)
-            .ok_or_else(|| anyhow!(format!("Failed to parse multipart range: {}", ranges)));
+        parse_ranges(&ranges)
+            .ok_or_else(|| anyhow!(format!("Failed to parse multipart range: {}", ranges)))
     }
 }
 

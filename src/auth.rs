@@ -11,7 +11,7 @@ pub enum AuthMethod {
 
 impl ToString for AuthMethod {
     fn to_string(&self) -> String {
-        return format!("{:?}", self);
+        format!("{:?}", self)
     }
 }
 
@@ -38,7 +38,7 @@ impl Authenticator {
         }
 
         match auth_type {
-            AuthMethod::Basic => return auth_basic(data),
+            AuthMethod::Basic => auth_basic(data),
             _ => panic!("{:?} is not supported", auth_type),
         }
     }

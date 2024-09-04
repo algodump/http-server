@@ -31,11 +31,11 @@ impl ToString for ResponseCode {
         }
         match self {
             ResponseCode::Success(code) => match code {
-                SuccessCode::Ok => return "OK".to_string(),
-                _ => return split_camel_case(format!("{:?}", code)),
+                SuccessCode::Ok => "OK".to_string(),
+                _ => split_camel_case(format!("{:?}", code)),
             },
 
-            ResponseCode::Error(code) => return split_camel_case(format!("{:?}", code)),
+            ResponseCode::Error(code) => split_camel_case(format!("{:?}", code)),
         }
     }
 }
@@ -161,15 +161,11 @@ pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResp
             InternalHttpError::KnownError(http_error_code) => {
                 HttpResponseBuilder::default(ResponseCode::Error(*http_error_code)).build()
             }
-            _ => {
-                return HttpResponseBuilder::default(ResponseCode::Error(ErrorCode::BadRequest))
-                    .build()
-            }
+            _ => HttpResponseBuilder::default(ResponseCode::Error(ErrorCode::BadRequest)).build(),
         }
     } else {
         error!("System error: {:?}", mb_http_error);
-        return HttpResponseBuilder::default(ResponseCode::Error(ErrorCode::InternalServerError))
-            .build();
+        HttpResponseBuilder::default(ResponseCode::Error(ErrorCode::InternalServerError)).build()
     }
 }
 
@@ -229,23 +225,25 @@ pub fn build_response_for_multipart_request(
     if ranges.is_multipart() {
         let boundary = HttpResponse::partial_content_boundary();
         let multipart_content_type = format!("multipart/byteranges; boundary={}", boundary);
-        return partial_content_builder
+
+        partial_content_builder
             .header("content-type", multipart_content_type)
             .optional_body(
                 &build_body_for_multipart_request(&ranges, &content_type, &boundary, &file_content),
                 is_not_head_request,
             )
-            .build();
+            .build()
     } else {
         let range = ranges.first().unwrap();
-        return partial_content_builder
+
+        partial_content_builder
             .header("content-type", content_type)
             .header(
                 "content-range",
                 format!("bytes {}-{}", range.from, range.to),
             )
             .optional_body(&file_content, is_not_head_request)
-            .build();
+            .build()
     }
 }
 
@@ -354,7 +352,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                     return echo_response;
                 }
                 error!("GET: Unhandled response message: resource - {:?}", resource);
-                return internal_server_error_response_builder.build();
+                internal_server_error_response_builder.build()
             }
         },
         HttpRequestMethod::POST => {
@@ -386,7 +384,7 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                 )
                 .build();
             }
-            return internal_server_error_response_builder.build();
+            internal_server_error_response_builder.build()
         }
         HttpRequestMethod::OPTIONS => {
             let Ok(content_type) = http_request.content().get_content_type(&resource) else {
@@ -399,20 +397,18 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                 .build();
             };
 
-            return ok_response_builder
+            ok_response_builder
                 .header("allow", HttpRequestMethod::supported_methods().join(", "))
                 .header("content-type", content_type)
                 .header("content-length", "0")
-                .build();
+                .build()
         }
-        _ => {
-            return HttpResponseBuilder::new(
-                ResponseCode::Error(ErrorCode::NotImplemented),
-                &version,
-                encoding,
-            )
-            .build()
-        }
+        _ => HttpResponseBuilder::new(
+            ResponseCode::Error(ErrorCode::NotImplemented),
+            &version,
+            encoding,
+        )
+        .build(),
     }
 }
 
@@ -438,7 +434,7 @@ mod tests {
     fn generate_error_response_for(invalid_request: &str) -> HttpResponse {
         let mut stream = Cursor::new(invalid_request.as_bytes().to_vec());
         let http_error = parse_http_request(&mut stream).unwrap_err();
-        return build_http_response_for_invalid_request(http_error);
+        build_http_response_for_invalid_request(http_error)
     }
 
     fn get_full_path(file_path: &str) -> PathBuf {
