@@ -6,7 +6,9 @@ use std::{
     thread,
 };
 
-use crate::{cache::CacheControl, common::*, compressor::ContentEncoding, url::Url};
+use crate::{
+    auth::AuthMethod, cache::CacheControl, common::*, compressor::ContentEncoding, url::Url,
+};
 
 use anyhow::{anyhow, Context, Result};
 use log::{info, trace};
@@ -56,6 +58,7 @@ pub struct HttpRequest {
     requested_encoding: Option<ContentEncoding>,
     ranges: Option<Ranges>,
     cache_control: Option<CacheControl>,
+    auth_info: Option<(AuthMethod, String)>,
 }
 
 impl HttpRequest {
@@ -86,6 +89,10 @@ impl HttpRequest {
     pub fn cache_control(&self) -> &Option<CacheControl> {
         &self.cache_control
     }
+
+    pub fn auth_info(&self) -> &Option<(AuthMethod, String)> {
+        &self.auth_info
+    }
 }
 
 pub struct HttpRequestBuilder(HttpRequest);
@@ -97,6 +104,7 @@ impl HttpRequestBuilder {
             requested_encoding: None,
             ranges: None,
             cache_control: None,
+            auth_info: None,
         })
     }
 
@@ -109,6 +117,11 @@ impl HttpRequestBuilder {
         };
         self.0.ranges = Some(ranges);
         self.header("Range", format!("bytes={}", range_content))
+    }
+
+    pub fn set_auth_info(mut self, auth_info: (AuthMethod, String)) -> Self {
+        self.0.auth_info = Some(auth_info);
+        self
     }
 
     pub fn header(
@@ -201,6 +214,15 @@ fn choose_content_encoding(content_encodings: &Vec<ContentEncoding>) -> Result<C
     return Ok(supported_encoding.clone());
 }
 
+fn get_auth_information(authorization_string: &str) -> Result<(AuthMethod, String)> {
+    let (auth_method, auth_data) = authorization_string
+        .split_once(' ')
+        .ok_or_else(|| anyhow!("Wrong authorization string"))?;
+    let auth_method = AuthMethod::from_str(auth_method)?;
+
+    Ok((auth_method, auth_data.to_string()))
+}
+
 pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpRequest> {
     let mut buf_reader = BufReader::new(stream);
 
@@ -289,6 +311,9 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
     let cache_control = headers
         .get("cache-control")
         .and_then(|cache_control| cache_control.parse().ok());
+    let auth_info = headers
+        .get("authorization")
+        .and_then(|auth_string| get_auth_information(auth_string).ok());
 
     return Ok(HttpRequest {
         request_line: HttpRequestLine::new(method, url, version),
@@ -296,6 +321,7 @@ pub fn parse_http_request_internal(stream: &mut impl HttpStream) -> Result<HttpR
         requested_encoding,
         ranges,
         cache_control,
+        auth_info,
     });
 }
 

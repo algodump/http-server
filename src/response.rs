@@ -4,17 +4,16 @@ use std::{
     fs::{self, File},
     io::Write,
     os::windows::fs::FileExt,
-    str::FromStr,
 };
 
 use crate::{
-    auth::{AuthMethod, Authenticator},
+    auth::Authenticator,
     common::*,
     compressor::{Compressor, ContentEncoding},
     request::{HttpRequest, HttpRequestMethod},
 };
 
-use anyhow::{anyhow, Error, Result};
+use anyhow::{Error, Result};
 use chrono::Utc;
 use log::{error, trace};
 
@@ -174,15 +173,6 @@ pub fn build_http_response_for_invalid_request(mb_http_error: Error) -> HttpResp
     }
 }
 
-// TODO: probably this should be done during the request parsing phase
-fn get_auth_information(authorization_string: &str) -> Result<(AuthMethod, &[u8])> {
-    let (auth_method, auth_data) = authorization_string
-        .split_once(' ')
-        .ok_or_else(|| anyhow!("Wrong authorization string "))?;
-    let auth_method = AuthMethod::from_str(auth_method)?;
-    return Ok((auth_method, auth_data.as_bytes()));
-}
-
 fn read_file_content(file: &File, content_range: Option<Ranges>) -> Result<Vec<u8>> {
     let range = match content_range {
         Some(ranges) if !ranges.is_multipart() => {
@@ -298,15 +288,9 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
             }
             _ => {
                 if let Some(file_path) = resource.strip_prefix("/files/") {
-                    if let Some(auth_string) = http_request.content().get_header("authorization") {
-                        let auth_information = get_auth_information(auth_string);
-                        let Ok((auth_method, auth_data)) = auth_information else {
-                            return build_http_response_for_invalid_request(
-                                auth_information.unwrap_err(),
-                            );
-                        };
-
-                        let authenticated = Authenticator::authenticate(auth_data, &auth_method);
+                    if let Some((auth_method, auth_data)) = http_request.auth_info() {
+                        let authenticated =
+                            Authenticator::authenticate(auth_data.as_bytes(), &auth_method);
                         if !authenticated {
                             return HttpResponseBuilder::new(
                                 ResponseCode::Error(ErrorCode::Unauthorized),
@@ -444,7 +428,7 @@ mod tests {
     };
 
     use crate::{
-        auth::Authenticator,
+        auth::{AuthMethod, Authenticator},
         common::{Range, Ranges, MAX_HEADER_SIZE, MAX_REQUEST_BODY_SIZE, MAX_URI_LENGTH},
         request::{parse_http_request, HttpRequestBuilder, HttpRequestLine, HttpRequestMethod},
         url::Url,
@@ -629,7 +613,7 @@ mod tests {
     #[test]
     fn response_unauthorized_request() {
         let request = request_get_builder("/files/test")
-            .header("authorization", "Basic djkfdskjf")
+            .set_auth_info((AuthMethod::Basic, String::from("djkfdskjf")))
             .build();
         let response = build_http_response(&request);
 
