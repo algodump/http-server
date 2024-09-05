@@ -25,5 +25,4 @@ cargo run -- --ip 192.168.0.1 --port 3499
 - [x] Implement simple authentication
 - [x] Implement HTTP cache
 - [x] Implement compression
-- [ ] Implement all other methods
 - [ ] Add integration test

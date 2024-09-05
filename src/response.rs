@@ -248,7 +248,12 @@ pub fn build_response_for_multipart_request(
 }
 
 pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
-    let resource = http_request.get_url().resource();
+    let resource = http_request
+        .get_url()
+        .resource()
+        .trim_start_matches(|c| c == '/' || c == '\\')
+        .to_string();
+
     let version = http_request.get_version();
     let encoding = http_request.get_encoding();
     let method = http_request.get_method();
@@ -273,8 +278,8 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
 
     match method {
         HttpRequestMethod::GET | HttpRequestMethod::HEAD => match resource.as_str() {
-            "/" => ok_response_builder.build(),
-            "/user-agent" => {
+            "" => ok_response_builder.build(),
+            "user-agent" => {
                 if let Some(user_agent) = http_request.content().get_header("user-agent") {
                     ok_response_builder
                         .header("content-type", "text/plain")
@@ -284,107 +289,99 @@ pub fn build_http_response(http_request: &HttpRequest) -> HttpResponse {
                     not_found_response_builder.build()
                 }
             }
+            echo_request if resource.starts_with("echo/") => {
+                let echo = echo_request.strip_prefix("echo/").unwrap();
+                let echo_response = ok_response_builder
+                    .header("content-type", "text/plain")
+                    .optional_body(echo.as_bytes(), is_not_head_request)
+                    .build();
+
+                return echo_response;
+            }
             _ => {
-                if let Some(file_path) = resource.strip_prefix("/files/") {
-                    if let Some((auth_method, auth_data)) = http_request.auth_info() {
-                        let authenticated =
-                            Authenticator::authenticate(auth_data.as_bytes(), &auth_method);
-                        if !authenticated {
-                            return HttpResponseBuilder::new(
-                                ResponseCode::Error(ErrorCode::Unauthorized),
-                                &version,
-                                encoding,
-                            )
-                            .header("WWW-Authenticate", auth_method.to_string())
-                            .build();
-                        }
-                    }
-
-                    let mb_file = fs::File::open(file_path);
-                    let Ok(file) = mb_file else {
-                        error!(
-                            "Can't open `{:?}` error = {:?}",
-                            file_path,
-                            mb_file.unwrap_err()
-                        );
-                        return not_found_response_builder.build();
-                    };
-
-                    let Ok(content_type) = http_request.content().get_content_type(file_path)
-                    else {
-                        error!("Unsupported media type: {}", resource);
+                if let Some((auth_method, auth_data)) = http_request.auth_info() {
+                    let authenticated =
+                        Authenticator::authenticate(auth_data.as_bytes(), &auth_method);
+                    if !authenticated {
                         return HttpResponseBuilder::new(
-                            ResponseCode::Error(ErrorCode::UnsupportedMediaType),
+                            ResponseCode::Error(ErrorCode::Unauthorized),
                             &version,
                             encoding,
                         )
+                        .header("WWW-Authenticate", auth_method.to_string())
                         .build();
-                    };
-                    trace!("Content type: {}", content_type);
-
-                    // TODO: don't unwrap error, and don't use this pattern with mb_something then Ok()
-                    let mb_file_content = read_file_content(&file, http_request.ranges());
-                    let Ok(file_content) = mb_file_content else {
-                        return build_http_response_for_invalid_request(
-                            mb_file_content.unwrap_err(),
-                        );
-                    };
-
-                    if let Some(ranges) = http_request.ranges() {
-                        return build_response_for_multipart_request(
-                            &http_request,
-                            &file_content,
-                            &ranges,
-                            &content_type,
-                        );
                     }
-
-                    return ok_response_builder
-                        .header("content-type", content_type)
-                        .optional_body(&file_content, is_not_head_request)
-                        .build();
-                } else if let Some(echo) = resource.strip_prefix("/echo/") {
-                    let echo_response = ok_response_builder
-                        .header("content-type", "text/plain")
-                        .optional_body(echo.as_bytes(), is_not_head_request)
-                        .build();
-
-                    return echo_response;
                 }
-                error!("GET: Unhandled response message: resource - {:?}", resource);
-                internal_server_error_response_builder.build()
+
+                let mb_file = fs::File::open(&resource);
+                let Ok(file) = mb_file else {
+                    error!(
+                        "Can't find `{:?}` error = {:?}",
+                        resource,
+                        mb_file.unwrap_err()
+                    );
+                    return not_found_response_builder.build();
+                };
+
+                let Ok(content_type) = http_request.content().get_content_type(&resource) else {
+                    error!("Unsupported media type: {}", resource);
+                    return HttpResponseBuilder::new(
+                        ResponseCode::Error(ErrorCode::UnsupportedMediaType),
+                        &version,
+                        encoding,
+                    )
+                    .build();
+                };
+                trace!("Content type: {}", content_type);
+
+                // TODO: don't unwrap error, and don't use this pattern with mb_something then Ok()
+                let mb_file_content = read_file_content(&file, http_request.ranges());
+                let Ok(file_content) = mb_file_content else {
+                    return build_http_response_for_invalid_request(mb_file_content.unwrap_err());
+                };
+
+                if let Some(ranges) = http_request.ranges() {
+                    return build_response_for_multipart_request(
+                        &http_request,
+                        &file_content,
+                        &ranges,
+                        &content_type,
+                    );
+                }
+
+                ok_response_builder
+                    .header("content-type", content_type)
+                    .optional_body(&file_content, is_not_head_request)
+                    .build()
             }
         },
         HttpRequestMethod::POST => {
-            if let Some(file_path) = resource.strip_prefix("/files/") {
-                let mb_file = fs::File::create(file_path);
-                let Ok(mut file) = mb_file else {
-                    error!(
-                        "POST: Failed to create a file: {:?}. {:?}",
-                        file_path,
-                        mb_file.unwrap_err()
-                    );
-                    return internal_server_error_response_builder.build();
-                };
+            let mb_file = fs::File::create(&resource);
+            let Ok(mut file) = mb_file else {
+                error!(
+                    "POST: Failed to create a file: {:?}. {:?}",
+                    &resource,
+                    mb_file.unwrap_err()
+                );
+                return internal_server_error_response_builder.build();
+            };
 
-                let mb_success = file.write_all(&http_request.content().get_body());
-                let Ok(_) = mb_success else {
-                    error!(
-                        "POST: Failed to write to file: {:?}. {:?}",
-                        file_path,
-                        mb_success.unwrap_err()
-                    );
-                    return internal_server_error_response_builder.build();
-                };
+            let mb_success = file.write_all(&http_request.content().get_body());
+            let Ok(_) = mb_success else {
+                error!(
+                    "POST: Failed to write to file: {:?}. {:?}",
+                    &resource,
+                    mb_success.unwrap_err()
+                );
+                return internal_server_error_response_builder.build();
+            };
 
-                return HttpResponseBuilder::new(
-                    ResponseCode::Success(SuccessCode::Created),
-                    &version,
-                    encoding,
-                )
-                .build();
-            }
-            internal_server_error_response_builder.build()
+            return HttpResponseBuilder::new(
+                ResponseCode::Success(SuccessCode::Created),
+                &version,
+                encoding,
+            )
+            .build();
         }
         HttpRequestMethod::OPTIONS => {
             let Ok(content_type) = http_request.content().get_content_type(&resource) else {
@@ -524,8 +521,7 @@ mod tests {
         let file_full_path = get_full_path("src/main.rs");
         let file_content = read_file(&file_full_path);
 
-        let request =
-            request_get_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
+        let request = request_get_builder(&file_full_path.display().to_string()).build();
         let response = build_http_response(&request);
 
         assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
@@ -542,7 +538,7 @@ mod tests {
         let file_content = read_file(&file_full_path);
         let range = Range::new(0, 64);
         let ranges = Ranges::new(vec![range.clone()]);
-        let request = request_get_builder(format!("/files/{}", file_full_path.display()).as_str())
+        let request = request_get_builder(&file_full_path.display().to_string())
             .set_range(ranges.clone())
             .build();
         let response = build_http_response(&request);
@@ -569,7 +565,7 @@ mod tests {
         let file_full_path = get_full_path("src/main.rs");
         let range = Range::new(0, 64);
         let ranges = Ranges::new(vec![range.clone(), range.clone()]);
-        let request = request_get_builder(format!("/files/{}", file_full_path.display()).as_str())
+        let request = request_get_builder(&file_full_path.display().to_string())
             .set_range(ranges.clone())
             .build();
         let response = build_http_response(&request);
@@ -597,7 +593,7 @@ mod tests {
 
     #[test]
     fn response_get_file_not_found() {
-        let request = request_get_builder("/files/nonexistent_file").build();
+        let request = request_get_builder("/nonexistent_file").build();
         let response = build_http_response(&request);
 
         assert_eq!(
@@ -608,7 +604,7 @@ mod tests {
 
     #[test]
     fn response_unauthorized_request() {
-        let request = request_get_builder("/files/test")
+        let request = request_get_builder("/test")
             .set_auth_info((AuthMethod::Basic, String::from("djkfdskjf")))
             .build();
         let response = build_http_response(&request);
@@ -621,7 +617,7 @@ mod tests {
 
     #[test]
     fn response_authorized_request() {
-        let request = request_get_builder("/files/test")
+        let request = request_get_builder("/test")
             .header(
                 "authorization",
                 format!("Basic {}", Authenticator::default_credentials()),
@@ -632,17 +628,6 @@ mod tests {
         assert_ne!(
             response.status_code,
             ResponseCode::Error(ErrorCode::Unauthorized)
-        );
-    }
-
-    #[test]
-    fn response_invalid_get_prefix() {
-        let request = request_get_builder("/nonexistent/test").build();
-        let response = build_http_response(&request);
-
-        assert_eq!(
-            response.status_code,
-            ResponseCode::Error(ErrorCode::InternalServerError)
         );
     }
 
@@ -752,7 +737,7 @@ mod tests {
         let tmp_file_path = temp_dir().join("test.txt");
         let file_data = b"data for testing POST request".to_vec();
 
-        let request = request_post_builder(format!("/files/{}", tmp_file_path.display()).as_str())
+        let request = request_post_builder(&tmp_file_path.display().to_string())
             .body(&file_data)
             .build();
         let response = build_http_response(&request);
@@ -785,8 +770,7 @@ mod tests {
     fn response_head_file() {
         let file_full_path = get_full_path("src/main.rs");
 
-        let request =
-            request_head_builder(format!("/files/{}", file_full_path.display()).as_str()).build();
+        let request = request_head_builder(&file_full_path.display().to_string()).build();
         let response = build_http_response(&request);
 
         assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
@@ -803,8 +787,7 @@ mod tests {
     fn response_options() {
         let file_full_path = get_full_path("src/main.rs");
         let options_request =
-            request_options_builder(format!("/files/{}", file_full_path.display()).as_str())
-                .build();
+            request_options_builder(&file_full_path.display().to_string()).build();
         let response = build_http_response(&options_request);
 
         assert_eq!(response.status_code, ResponseCode::Success(SuccessCode::Ok));
